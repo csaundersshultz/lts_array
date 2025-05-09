@@ -85,6 +85,7 @@ class DataBin:
         if rij is None:
             self.rij = self.getrij(latlist, lonlist)
         else:
+            print('Ignoring `lat_list` and `lon_list` since `rij` array was provided!')
             self.rij = rij
         # Make sure the least squares problem is well-posed
         # rij must have at least 3 elements
