@@ -17,7 +17,7 @@ class DataBin:
         self.window_overlap = window_overlap
         self.alpha = alpha
 
-    def build_data_arrays(self, st, latlist, lonlist, rij=None, remove_elements=None):
+    def build_data_arrays(self, st, latlist, lonlist, remove_elements=None, rij=None):
         """ Collect basic data from stream file. Project lat/lon into r_ij coordinates.
 
         Alternatively, if ``rij`` is provided, ``latlist`` and ``lonlist`` are not used
@@ -27,11 +27,11 @@ class DataBin:
             st (stream): An obspy stream object.
             latlist (list): A list of latitude points.
             lonlist (list): A list of longitude points.
+            remove_elements (list): A list of elements to remove before processing. Python numbering is used, so "[0]" removes the first element.
             rij (array or None): A NumPy array with the first row corresponding to
                 cartesian "X" - coordinates and the second row corresponding to
                 cartesian "Y" - coordinates, in units of km. If this is provided then
                 ``latlist`` and ``lonlist`` are ignored.
-            remove_elements (list): A list of elements to remove before processing. Python numbering is used, so "[0]" removes the first element.
         """
         # Check that all traces have the same length
         if len(set([len(tr) for tr in st])) != 1:
