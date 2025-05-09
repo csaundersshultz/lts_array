@@ -19,7 +19,7 @@ def ltsva(st, lat_list, lon_list, window_length, window_overlap, alpha=1.0, rij=
             Choose 1.0 for ordinary least squares (default).
         rij (array or None): A NumPy array with the first row corresponding to cartesian
             "X" - coordinates and the second row corresponding to cartesian "Y" -
-            coordinates, in units of km. If this is not ``None`` then ``lat_list`` and
+            coordinates, in units of km. If this is provided then ``lat_list`` and
             ``lon_list`` are ignored.
         plot_array_coordinates (bool): Plot array coordinates? Defaults to False.
         remove_elements (list): (Optional) Remove element number(s) from ``st``, ``lat_list``, and ``lon_list`` before processing. Here numbering refers to the Python index (e.g. [0] = remove 1st element in stream).

@@ -29,8 +29,8 @@ class DataBin:
             lonlist (list): A list of longitude points.
             rij (array or None): A NumPy array with the first row corresponding to
                 cartesian "X" - coordinates and the second row corresponding to
-                cartesian "Y" - coordinates, in units of km. If this is not ``None``
-                then ``latlist`` and ``lonlist`` are ignored.
+                cartesian "Y" - coordinates, in units of km. If this is provided then
+                ``latlist`` and ``lonlist`` are ignored.
             remove_elements (list): A list of elements to remove before processing. Python numbering is used, so "[0]" removes the first element.
         """
         # Check that all traces have the same length
