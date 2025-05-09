@@ -40,7 +40,7 @@ def ltsva(st, lat_list, lon_list, window_length, window_overlap, alpha=1.0, plot
 
     # Build data object
     data = DataBin(window_length, window_overlap, alpha)
-    data.build_data_arrays(st, lat_list, lon_list, rij, remove_elements)
+    data.build_data_arrays(st, lat_list, lon_list, remove_elements, rij)
 
     # Plot array coordinates as a check
     if plot_array_coordinates:
