@@ -46,12 +46,10 @@ class DataBin:
                     latlist.remove(latlist[remove_elements[jj]])
                     lonlist.remove(lonlist[remove_elements[jj]])
                 else:
-                    _x, _y = rij
-                    _x_list = list(_x)
-                    _y_list = list(_y)
-                    _x_list.remove(_x_list[remove_elements[jj]])
-                    _y_list.remove(_y_list[remove_elements[jj]])
-                    rij = np.array([_x_list, _y_list])
+                    _x, _y = [list(_) for _ in rij]
+                    _x.remove(_x[remove_elements[jj]])
+                    _y.remove(_y[remove_elements[jj]])
+                    rij = np.array([_x, _y])
                 remove_elements -= 1
 
         # Save the station name
