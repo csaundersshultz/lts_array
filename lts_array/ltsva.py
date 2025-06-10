@@ -6,7 +6,7 @@ import warnings
 warnings.simplefilter(action='ignore', category=FutureWarning)
 
 
-def ltsva(st, lat_list, lon_list, window_length, window_overlap, alpha=1.0, plot_array_coordinates=False, remove_elements=None):
+def ltsva(st, lat_list, lon_list, window_length, window_overlap, alpha=1.0, plot_array_coordinates=False, remove_elements=None, rij=None):
     r""" Process infrasound or seismic array data with least trimmed squares (LTS).
 
     Args:
@@ -19,6 +19,10 @@ def ltsva(st, lat_list, lon_list, window_length, window_overlap, alpha=1.0, plot
             Choose 1.0 for ordinary least squares (default).
         plot_array_coordinates (bool): Plot array coordinates? Defaults to False.
         remove_elements (list): (Optional) Remove element number(s) from ``st``, ``lat_list``, and ``lon_list`` before processing. Here numbering refers to the Python index (e.g. [0] = remove 1st element in stream).
+        rij (array or None): A NumPy array with the first row corresponding to cartesian
+            "X" - coordinates and the second row corresponding to cartesian "Y" -
+            coordinates, in units of km. If this is provided then ``lat_list`` and
+            ``lon_list`` are ignored.
 
     Returns:
         (tuple):
@@ -36,7 +40,7 @@ def ltsva(st, lat_list, lon_list, window_length, window_overlap, alpha=1.0, plot
 
     # Build data object
     data = DataBin(window_length, window_overlap, alpha)
-    data.build_data_arrays(st, lat_list, lon_list, remove_elements)
+    data.build_data_arrays(st, lat_list, lon_list, remove_elements, rij)
 
     # Plot array coordinates as a check
     if plot_array_coordinates:
