@@ -4,7 +4,7 @@ from obspy.geodetics.base import calc_vincenty_inverse
 
 
 class DataBin:
-    """ Data container for LTS processing
+    """Data container for LTS processing
 
     Args:
         window_length (float): The window processing length [sec.]
@@ -17,8 +17,10 @@ class DataBin:
         self.window_overlap = window_overlap
         self.alpha = alpha
 
-    def build_data_arrays(self, st, latlist, lonlist, remove_elements=None, rij=None):
-        """ Collect basic data from stream file. Project lat/lon into r_ij coordinates.
+    def build_data_arrays(
+        self, st, latlist, lonlist, elevlist, remove_elements=None, rij=None
+    ):
+        """Collect basic data from stream file. Project lat/lon into r_ij coordinates.
 
         Alternatively, if ``rij`` is provided, ``latlist`` and ``lonlist`` are not used
         and the provided Cartesion coordinates ``rij`` are used instead.
@@ -27,6 +29,7 @@ class DataBin:
             st (stream): An obspy stream object.
             latlist (list): A list of latitude points.
             lonlist (list): A list of longitude points.
+            elevlist (list): A list of elevation points in meters. (optional)
             remove_elements (list): A list of elements to remove before processing. Python numbering is used, so "[0]" removes the first element.
             rij (array or None): A NumPy array with the first row corresponding to
                 cartesian "X" - coordinates and the second row corresponding to
@@ -35,7 +38,7 @@ class DataBin:
         """
         # Check that all traces have the same length
         if len(set([len(tr) for tr in st])) != 1:
-            raise ValueError('Traces in stream must have same length!')
+            raise ValueError("Traces in stream must have same length!")
 
         # Remove predetermined elements before processing
         if (remove_elements is not None) and (len(remove_elements) > 0):
@@ -45,8 +48,12 @@ class DataBin:
                 if rij is None:
                     latlist.remove(latlist[remove_elements[jj]])
                     lonlist.remove(lonlist[remove_elements[jj]])
-                else:
-                    _x, _y = [list(_) for _ in rij]
+                    elevlist.remove(lonlist[remove_elements[jj]])
+                else:  # elevation or z not implemented in rij yet
+                    (
+                        _x,
+                        _y,
+                    ) = [list(_) for _ in rij]
                     _x.remove(_x[remove_elements[jj]])
                     _y.remove(_y[remove_elements[jj]])
                     rij = np.array([_x, _y])
@@ -61,7 +68,7 @@ class DataBin:
         # If blank, pull from IMS-style station name
         self.element_names = []
         for tr in st:
-            if tr.stats.location == '':
+            if tr.stats.location == "":
                 # IMS element names
                 self.element_names.append(tr.stats.station[-2:])
             else:
@@ -70,34 +77,39 @@ class DataBin:
         self.sampling_rate = st[0].stats.sampling_rate
         self.winlensamp = int(self.window_length * self.sampling_rate)
         # Sample increment (delta_t)
-        self.sampinc = int(np.round(
-            (1 - self.window_overlap) * self.winlensamp))
+        self.sampinc = int(np.round((1 - self.window_overlap) * self.winlensamp))
         # Time intervals to window data
-        self.intervals = np.arange(0, self.npts - self.winlensamp, self.sampinc, dtype='int') # noqa
+        self.intervals = np.arange(
+            0, self.npts - self.winlensamp, self.sampinc, dtype="int"
+        )  # noqa
         self.nits = len(self.intervals)
         # Pull time vector from stream object
-        self.tvec = st[0].times('matplotlib')
+        self.tvec = st[0].times("matplotlib")
         # Store data traces in an array for processing.
         self.data = np.empty((self.npts, self.nchans))
         for ii, tr in enumerate(st):
             self.data[:, ii] = tr.data
         # Set the array coordinates
         if rij is None:
-            self.rij = self.getrij(latlist, lonlist)
+            self.rij = self.getrij(latlist, lonlist, elevlist)
         else:
-            print('Ignoring `lat_list` and `lon_list` since `rij` array was provided!')
+            print("Ignoring `lat_list` and `lon_list` since `rij` array was provided!")
             self.rij = rij
         # Make sure the least squares problem is well-posed
         # rij must have at least 3 elements
         if np.shape(self.rij)[1] < 3:
-            raise RuntimeError('The array must have at least 3 elements for well-posed least squares estimation. Check rij array coordinates.')
+            raise RuntimeError(
+                "The array must have at least 3 elements for well-posed least squares estimation. Check rij array coordinates."
+            )
         # Is least trimmed squares or ordinary least squares going to be used?
         if self.alpha == 1.0:
-            print('ALPHA is 1.00. Performing an ordinary',
-                  'least squares fit, NOT least trimmed squares.')
+            print(
+                "ALPHA is 1.00. Performing an ordinary",
+                "least squares fit, NOT least trimmed squares.",
+            )
 
-    def getrij(self, latlist, lonlist):
-        r""" Calculate element locations (r_ij) from latitude and longitude.
+    def getrij(self, latlist, lonlist, elevlist):
+        r"""Calculate element locations (r_ij) from latitude and longitude.
 
         Return the projected geographic positions
         in X-Y (Cartesian) coordinates. Points are calculated
@@ -115,40 +127,49 @@ class DataBin:
         """
 
         # Check that the lat-lon arrays are the same size.
-        if (len(latlist) != self.nchans) or (len(lonlist) != self.nchans):
-            raise ValueError('Mismatch between the number of stream channels and the latitude or longitude list length.') # noqa
+        if (
+            (len(latlist) != self.nchans)
+            or (len(lonlist) != self.nchans)
+            or (len(elevlist) != self.nchans)
+        ):
+            raise ValueError(
+                "Mismatch between the number of stream channels and the latitude or longitude list length."
+            )  # noqa
 
         # Pre-allocate "x" and "y" arrays.
-        xnew = np.zeros((self.nchans, ))
-        ynew = np.zeros((self.nchans, ))
+        xnew = np.zeros((self.nchans,))
+        ynew = np.zeros((self.nchans,))
+        znew = np.array(elevlist) / 1000  # divide by 1000 to convert to km
 
         for jj in range(1, self.nchans):
             # Obspy defaults to the WGS84 ellipsoid.
             delta, az, _ = calc_vincenty_inverse(
-                latlist[0], lonlist[0], latlist[jj], lonlist[jj])
+                latlist[0], lonlist[0], latlist[jj], lonlist[jj]
+            )
             # Convert azimuth to degrees from North
             az = (450 - az) % 360
-            xnew[jj] = delta/1000 * np.cos(az*np.pi/180)
-            ynew[jj] = delta/1000 * np.sin(az*np.pi/180)
+            xnew[jj] = delta / 1000 * np.cos(az * np.pi / 180)
+            ynew[jj] = delta / 1000 * np.sin(az * np.pi / 180)
 
-        # Remove the mean.
+        # Remove the mean. also remove the mean from the z
         xnew -= np.mean(xnew)
         ynew -= np.mean(ynew)
+        znew -= np.mean(znew)
 
-        rij = np.array([xnew.tolist(), ynew.tolist()])
+        rij = np.array([xnew.tolist(), ynew.tolist(), znew.tolist()])
 
         return rij
 
     def plot_array_coordinates(self):
-        """ Plot array element locations in Cartesian coordinates to the default device.
-        """
+        """Plot array element locations in Cartesian coordinates to the default device."""
         # Plot array coordinates
         fig = plt.figure(1)
         plt.clf()
-        plt.plot(self.rij[0, :], self.rij[1, :], 'ro')
-        plt.axis('equal')
-        plt.ylabel('km')
-        plt.xlabel('km')
+        plt.scatter(self.rij[0, :], self.rij[1, :], c=self.rij[2, :], cmap="viridis")
+        plt.colorbar(label="Relative elevation (km)")
+        plt.axis("equal")
+        plt.ylabel("km")
+        plt.xlabel("km")
         plt.title(self.station_name)
         for jj in range(0, self.nchans):
             plt.text(self.rij[0, jj], self.rij[1, jj], self.element_names[jj])

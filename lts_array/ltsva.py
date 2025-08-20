@@ -3,16 +3,29 @@ from lts_array.classes.lts_classes import OLSEstimator, LTSEstimator
 
 # Don't print FutureWarning for scipy.lstsq
 import warnings
-warnings.simplefilter(action='ignore', category=FutureWarning)
+
+warnings.simplefilter(action="ignore", category=FutureWarning)
 
 
-def ltsva(st, lat_list, lon_list, window_length, window_overlap, alpha=1.0, plot_array_coordinates=False, remove_elements=None, rij=None):
-    r""" Process infrasound or seismic array data with least trimmed squares (LTS).
+def ltsva(
+    st,
+    lat_list,
+    lon_list,
+    elev_list,
+    window_length,
+    window_overlap,
+    alpha=1.0,
+    plot_array_coordinates=False,
+    remove_elements=None,
+    rij=None,
+):
+    r"""Process infrasound or seismic array data with least trimmed squares (LTS).
 
     Args:
         st: Obspy stream object. Assumes response has been removed.
         lat_list (list): List of latitude values for each element in ``st``.
         lon_list (list): List of longitude values for each element in ``st``.
+        elev_list (list): List of elevation values for each element in ``st``, measured in meters.
         window_length (float): Window length in seconds.
         window_overlap (float): Window overlap in the range (0.0 - 1.0).
         alpha (float): Fraction of data for LTS subsetting [0.5 - 1.0].
@@ -39,13 +52,18 @@ def ltsva(st, lat_list, lon_list, window_length, window_overlap, alpha=1.0, plot
     """
 
     # Build data object
+    # TODO make DataBin accept elevation list and format it properly DONE
+    # TODO make DataBin accept elevations in rij NOT DONE
     data = DataBin(window_length, window_overlap, alpha)
-    data.build_data_arrays(st, lat_list, lon_list, remove_elements, rij)
+    data.build_data_arrays(st, lat_list, lon_list, elev_list, remove_elements, rij)
 
     # Plot array coordinates as a check
+    # TODO plot array coordinates with elevation as color? DONE
     if plot_array_coordinates:
         data.plot_array_coordinates()
 
+    # TODO make OLSE return azimuth and zenith source angles
+    # TODO make LTSE return azimuth and zenith source angles
     if data.alpha == 1.0:
         # Ordinary Least Squares
         ltsva = OLSEstimator(data)
@@ -53,6 +71,18 @@ def ltsva(st, lat_list, lon_list, window_length, window_overlap, alpha=1.0, plot
         # Least Trimmed Squares
         ltsva = LTSEstimator(data)
     ltsva.correlate(data)
-    ltsva.solve(data)
+    # ltsva.solve(data)
+    ltsva.solve_3d(data)
 
-    return ltsva.lts_vel, ltsva.lts_baz, ltsva.t, ltsva.mdccm, ltsva.stdict, ltsva.sigma_tau, ltsva.conf_int_vel, ltsva.conf_int_baz
+    return (
+        ltsva.lts_vel,
+        ltsva.lts_baz,
+        ltsva.lts_elev,
+        ltsva.t,
+        ltsva.mdccm,
+        ltsva.stdict,
+        ltsva.sigma_tau,
+        ltsva.conf_int_vel,
+        ltsva.conf_int_baz,
+        ltsva.conf_int_elev,
+    )

@@ -15,7 +15,7 @@ from numba import jit
 
 @jit(nopython=True)
 def random_set(tot, npar, seed):
-    """ Generate a random data subset for LTS. """
+    """Generate a random data subset for LTS."""
     randlist = []
     for ii in range(0, npar):
         seed = np.floor(seed * 5761) + 999
@@ -38,7 +38,7 @@ def random_set(tot, npar, seed):
 
 @jit(nopython=True)
 def check_array(candidate_size, best_coeff, best_obj, z, obj):
-    """ Keep best coefficients for final C-step iteration.
+    """Keep best coefficients for final C-step iteration.
     Don't keep duplicates.
     """
     insert = True
@@ -56,13 +56,30 @@ def check_array(candidate_size, best_coeff, best_obj, z, obj):
 
 
 @jit(nopython=True)
-def fast_LTS(nits, tau, time_delay_mad, xij_standardized, xij_mad, dimension_number, candidate_size, n_samples, co_array_num, slowness_coeffs, csteps, h, csteps2, random_set, _insertion):
-    """ Run the FAST_LTS algorithm to determine an initial optimal slowness vector.
-    """
+def fast_LTS(
+    nits,
+    tau,
+    time_delay_mad,
+    xij_standardized,
+    xij_mad,
+    dimension_number,
+    candidate_size,
+    n_samples,
+    co_array_num,
+    slowness_coeffs,
+    csteps,
+    h,
+    csteps2,
+    random_set,
+    _insertion,
+):
+    """Run the FAST_LTS algorithm to determine an initial optimal slowness vector."""
     for jj in range(nits):
 
         # Check for data spike.
-        if (time_delay_mad[jj] == 0) or (np.count_nonzero(tau[:, jj, :]) < (co_array_num - 2)):
+        if (time_delay_mad[jj] == 0) or (
+            np.count_nonzero(tau[:, jj, :]) < (co_array_num - 2)
+        ):
             # We have a data spike, so do not process.
             continue
 
@@ -70,8 +87,8 @@ def fast_LTS(nits, tau, time_delay_mad, xij_standardized, xij_mad, dimension_num
         y_var = tau[:, jj, :] / time_delay_mad[jj]
         X_var = xij_standardized
 
-        objective_array = np.full((candidate_size, ), np.inf)
-        coeff_array = np.full((dimension_number, candidate_size), np.nan) # noqa
+        objective_array = np.full((candidate_size,), np.inf)
+        coeff_array = np.full((dimension_number, candidate_size), np.nan)  # noqa
         # Initial seed for random search
         seed = 0
         # Initial best objective function value
@@ -80,23 +97,23 @@ def fast_LTS(nits, tau, time_delay_mad, xij_standardized, xij_mad, dimension_num
         for ii in range(0, n_samples):
             prev_obj = 0
             # Initial random solution
-            index, seed = random_set(co_array_num, dimension_number, seed) # noqa
+            index, seed = random_set(co_array_num, dimension_number, seed)  # noqa
             q, r = np.linalg.qr(X_var[index, :])
             qt = q.conj().T @ y_var[index]
             z = np.linalg.lstsq(r, qt)[0]
             residuals = y_var - X_var @ z
             # Perform C-steps
             for kk in range(0, csteps):
-                sortind = np.argsort(np.abs(residuals).flatten()) # noqa
+                sortind = np.argsort(np.abs(residuals).flatten())  # noqa
                 obs_in_set = sortind.flatten()[0:h]
                 q, r = np.linalg.qr(X_var[obs_in_set, :])
                 qt = q.conj().T @ y_var[obs_in_set]
                 z = np.linalg.lstsq(r, qt)[0]
                 residuals = y_var - X_var @ z
                 # Sort the residuals in magnitude from low to high
-                sor = np.sort(np.abs(residuals).flatten()) # noqa
+                sor = np.sort(np.abs(residuals).flatten())  # noqa
                 # Sum the first "h" squared residuals
-                obj = np.sum(sor[0:h]**2)
+                obj = np.sum(sor[0:h] ** 2)
                 # Stop if the C-steps have converged
                 if (kk >= 1) and (obj == prev_obj):
                     break
@@ -105,7 +122,8 @@ def fast_LTS(nits, tau, time_delay_mad, xij_standardized, xij_mad, dimension_num
             if obj < np.max(objective_array):
                 # Save the best objective function values.
                 coeff_array, objective_array = check_array(
-                    candidate_size, coeff_array, objective_array, z, obj) # noqa
+                    candidate_size, coeff_array, objective_array, z, obj
+                )  # noqa
 
         # Final condensation of promising data points
         for ii in range(0, candidate_size):
@@ -114,7 +132,7 @@ def fast_LTS(nits, tau, time_delay_mad, xij_standardized, xij_mad, dimension_num
                 z = coeff_array[:, ii].copy()
                 z = z.reshape((len(z), 1))
             else:
-                index, seed = random_set(co_array_num, dimension_number, seed) # noqa
+                index, seed = random_set(co_array_num, dimension_number, seed)  # noqa
                 q, r = np.linalg.qr(X_var[index, :])
                 qt = q.conj().T @ y_var[index]
                 z = np.linalg.lstsq(r, qt)[0]
@@ -123,16 +141,16 @@ def fast_LTS(nits, tau, time_delay_mad, xij_standardized, xij_mad, dimension_num
                 residuals = y_var - X_var @ z
                 # Perform C-steps
                 for kk in range(0, csteps2):
-                    sort_ind = np.argsort(np.abs(residuals).flatten()) # noqa
+                    sort_ind = np.argsort(np.abs(residuals).flatten())  # noqa
                     obs_in_set = sort_ind.flatten()[0:h]
                     q, r = np.linalg.qr(X_var[obs_in_set, :])
                     qt = q.conj().T @ y_var[obs_in_set]
                     z = np.linalg.lstsq(r, qt)[0]
                     residuals = y_var - X_var @ z
                     # Sort the residuals in magnitude from low to high
-                    sor = np.sort(np.abs(residuals).flatten()) # noqa
+                    sor = np.sort(np.abs(residuals).flatten())  # noqa
                     # Sum the first "h" squared residuals
-                    obj = np.sum(sor[0:h]**2)
+                    obj = np.sum(sor[0:h] ** 2)
                     # Stop if the C-steps have converged
                     if (kk >= 1) and (obj == prev_obj):
                         break
@@ -154,7 +172,7 @@ def fast_LTS(nits, tau, time_delay_mad, xij_standardized, xij_mad, dimension_num
 # functions
 ###########
 def raw_corfactor_lts(p, n, ALPHA):
-    r""" Calculates the correction factor (from Pison et al. 2002)
+    r"""Calculates the correction factor (from Pison et al. 2002)
         to make the LTS solution unbiased for small n.
 
     Args:
@@ -171,13 +189,21 @@ def raw_corfactor_lts(p, n, ALPHA):
     """
 
     # ALPHA = 0.875.
-    coeffalpha875 = np.array([
-        [-0.251778730491252, -0.146660023184295],
-        [0.883966931611758, 0.86292940340761], [3, 5]])
+    coeffalpha875 = np.array(
+        [
+            [-0.251778730491252, -0.146660023184295],
+            [0.883966931611758, 0.86292940340761],
+            [3, 5],
+        ]
+    )
     # ALPHA = 0.500.
-    coeffalpha500 = np.array([
-        [-0.487338281979106, -0.340762058011],
-        [0.405511279418594, 0.37972360544988], [3, 5]])
+    coeffalpha500 = np.array(
+        [
+            [-0.487338281979106, -0.340762058011],
+            [0.405511279418594, 0.37972360544988],
+            [3, 5],
+        ]
+    )
 
     # Apply eqns (6) and (7) from Pison et al. (2002)
     y1_500 = 1 + coeffalpha500[0, 0] / np.power(p, coeffalpha500[1, 0])
@@ -189,18 +215,24 @@ def raw_corfactor_lts(p, n, ALPHA):
     y1_500 = np.log(1 - y1_500)
     y2_500 = np.log(1 - y2_500)
     y_500 = np.array([[y1_500], [y2_500]])
-    X_500 = np.array([      # noqa
-        [1, np.log(1/(coeffalpha500[2, 0]*p**2))],
-        [1, np.log(1/(coeffalpha500[2, 1]*p**2))]])
+    X_500 = np.array(
+        [  # noqa
+            [1, np.log(1 / (coeffalpha500[2, 0] * p**2))],
+            [1, np.log(1 / (coeffalpha500[2, 1] * p**2))],
+        ]
+    )
     c500 = np.linalg.lstsq(X_500, y_500, rcond=-1)[0]
 
     # Solve for new ALPHA = 0.875 coefficients for the input p.
     y1_875 = np.log(1 - y1_875)
     y2_875 = np.log(1 - y2_875)
     y_875 = np.array([[y1_875], [y2_875]])
-    X_875 = np.array([      # noqa
-        [1, np.log(1 / (coeffalpha875[2, 0] * p**2))],
-        [1, np.log(1 / (coeffalpha875[2, 1] * p**2))]])
+    X_875 = np.array(
+        [  # noqa
+            [1, np.log(1 / (coeffalpha875[2, 0] * p**2))],
+            [1, np.log(1 / (coeffalpha875[2, 1] * p**2))],
+        ]
+    )
     c875 = np.linalg.lstsq(X_875, y_875, rcond=-1)[0]
 
     # Get new correction factors for the specified n.
@@ -209,17 +241,17 @@ def raw_corfactor_lts(p, n, ALPHA):
 
     # Linearly interpolate for the specified ALPHA.
     if (ALPHA >= 0.500) and (ALPHA <= 0.875):
-        fpfinal = fp500 + ((fp875 - fp500) / 0.375)*(ALPHA - 0.500)
+        fpfinal = fp500 + ((fp875 - fp500) / 0.375) * (ALPHA - 0.500)
 
     if (ALPHA > 0.875) and (ALPHA < 1):
-        fpfinal = fp875 + ((1 - fp875) / 0.125)*(ALPHA - 0.875)
+        fpfinal = fp875 + ((1 - fp875) / 0.125) * (ALPHA - 0.875)
 
     finitefactor = np.ndarray.item(1 / fpfinal)
     return finitefactor
 
 
 def raw_consfactor_lts(h, n):
-    r""" Calculate the constant used to make the
+    r"""Calculate the constant used to make the
      LTS scale estimators consistent for
      a normal distribution.
 
@@ -246,19 +278,19 @@ def raw_consfactor_lts(h, n):
 
 
 def _qnorm(p, s=1, m=0):
-    r""" The normal inverse distribution function. """
+    r"""The normal inverse distribution function."""
     x = erfinv(2 * p - 1) * np.sqrt(2) * s + m
     return x
 
 
 def _dnorm(x, s=1, m=0):
-    r""" The normal density function. """
-    c = (1 / (np.sqrt(2 * np.pi) * s)) * np.exp(-0.5 * ((x - m) / s)**2)
+    r"""The normal density function."""
+    c = (1 / (np.sqrt(2 * np.pi) * s)) * np.exp(-0.5 * ((x - m) / s) ** 2)
     return c
 
 
 def rew_corfactor_lts(p, n, ALPHA):
-    r""" Correction factor for final LTS least-squares fit.
+    r"""Correction factor for final LTS least-squares fit.
 
     Args:
         p (int): The rank of X, the number of parameters to fit.
@@ -275,14 +307,22 @@ def rew_corfactor_lts(p, n, ALPHA):
     """
 
     # ALPHA = 0.500.
-    coeffalpha500 = np.array([
-        [-0.417574780492848, -0.175753709374146],
-        [1.83958876341367, 1.8313809497999], [3, 5]])
+    coeffalpha500 = np.array(
+        [
+            [-0.417574780492848, -0.175753709374146],
+            [1.83958876341367, 1.8313809497999],
+            [3, 5],
+        ]
+    )
 
     # ALPHA = 0.875.
-    coeffalpha875 = np.array([
-        [-0.267522855927958, -0.161200683014406],
-        [1.17559984533974, 1.21675019853961], [3, 5]])
+    coeffalpha875 = np.array(
+        [
+            [-0.267522855927958, -0.161200683014406],
+            [1.17559984533974, 1.21675019853961],
+            [3, 5],
+        ]
+    )
 
     # Apply eqns (6) and (7) from Pison et al. (2002).
     y1_500 = 1 + coeffalpha500[0, 0] / np.power(p, coeffalpha500[1, 0])
@@ -294,18 +334,24 @@ def rew_corfactor_lts(p, n, ALPHA):
     y1_500 = np.log(1 - y1_500)
     y2_500 = np.log(1 - y2_500)
     y_500 = np.array([[y1_500], [y2_500]])
-    X_500 = np.array([      # noqa
-        [1, np.log(1 / (coeffalpha500[2, 0] * p**2))],
-        [1, np.log(1 / (coeffalpha500[2, 1] * p**2))]])
+    X_500 = np.array(
+        [  # noqa
+            [1, np.log(1 / (coeffalpha500[2, 0] * p**2))],
+            [1, np.log(1 / (coeffalpha500[2, 1] * p**2))],
+        ]
+    )
     c500 = np.linalg.lstsq(X_500, y_500, rcond=-1)[0]
 
     # Solve for new ALPHA = 0.875 coefficients for the input p.
     y1_875 = np.log(1 - y1_875)
     y2_875 = np.log(1 - y2_875)
     y_875 = np.array([[y1_875], [y2_875]])
-    X_875 = np.array([                          # noqa
-        [1, np.log(1 / (coeffalpha875[2, 0] * p**2))],
-        [1, np.log(1 / (coeffalpha875[2, 1] * p**2))]])
+    X_875 = np.array(
+        [  # noqa
+            [1, np.log(1 / (coeffalpha875[2, 0] * p**2))],
+            [1, np.log(1 / (coeffalpha875[2, 1] * p**2))],
+        ]
+    )
     c875 = np.linalg.lstsq(X_875, y_875, rcond=-1)[0]
 
     # Get new correction functions for the specified n.
@@ -314,17 +360,17 @@ def rew_corfactor_lts(p, n, ALPHA):
 
     # Linearly interpolate for the specified ALPHA.
     if (ALPHA >= 0.500) and (ALPHA <= 0.875):
-        fpfinal = fp500 + ((fp875 - fp500) / 0.375)*(ALPHA - 0.500)
+        fpfinal = fp500 + ((fp875 - fp500) / 0.375) * (ALPHA - 0.500)
 
     if (ALPHA > 0.875) and (ALPHA < 1):
-        fpfinal = fp875 + ((1 - fp875) / 0.125)*(ALPHA - 0.875)
+        fpfinal = fp875 + ((1 - fp875) / 0.125) * (ALPHA - 0.875)
 
     finitefactor = np.ndarray.item(1 / fpfinal)
     return finitefactor
 
 
 def rew_consfactor_lts(weights, p, n):
-    r""" Another correction factor for the final LTS fit.
+    r"""Another correction factor for the final LTS fit.
 
     Args:
         weights (array): The standardized residuals.
@@ -337,9 +383,9 @@ def rew_consfactor_lts(weights, p, n):
 
     """
     a = _dnorm(1 / (1 / (_qnorm((sum(weights) + n) / (2 * n)))))
-    b = (1 / _qnorm((np.sum(weights) + n) / (2 * n)))
+    b = 1 / _qnorm((np.sum(weights) + n) / (2 * n))
     q = 1 - ((2 * n) / (np.sum(weights) * b)) * a
-    cdelta_rew = 1/np.sqrt(q)
+    cdelta_rew = 1 / np.sqrt(q)
 
     return cdelta_rew
 
@@ -367,11 +413,11 @@ def cubicEqn(a, b, c):
         :math:`x^3 - 5x^2 + 8x - 4 = 0`.
     """
 
-    Q = a*a/9 - b/3
-    R = (3*c - a*b)/6 + a*a*a/27
-    Q3 = Q*Q*Q
-    R2 = R*R
-    ao3 = a/3
+    Q = a * a / 9 - b / 3
+    R = (3 * c - a * b) / 6 + a * a * a / 27
+    Q3 = Q * Q * Q
+    R2 = R * R
+    ao3 = a / 3
 
     # Q & R are real
     if np.isreal([a, b, c]).all():
@@ -380,9 +426,11 @@ def cubicEqn(a, b, c):
             sqQ = -2 * np.sqrt(Q)
             theta = np.arccos(R / np.sqrt(Q3))
             # This solution first published in 1615 by Viète!
-            x = [sqQ * np.cos(theta / 3) - ao3,
-                 sqQ * np.cos((theta + 2 * np.pi) / 3) - ao3,
-                 sqQ * np.cos((theta - 2 * np.pi) / 3) - ao3]
+            x = [
+                sqQ * np.cos(theta / 3) - ao3,
+                sqQ * np.cos((theta + 2 * np.pi) / 3) - ao3,
+                sqQ * np.cos((theta - 2 * np.pi) / 3) - ao3,
+            ]
         # Q & R real, but 1 real, 2 complex roots
         else:
             # this is req'd since np.sign(0) = 0
@@ -393,29 +441,30 @@ def cubicEqn(a, b, c):
             if A == 0:
                 B = 0
             else:
-                B = Q/A
+                B = Q / A
             # one real root & two conjugate complex ones
             x = [
-                (A+B) - ao3,
-                -.5 * (A+B) + 1j * np.sqrt(3) / 2 * (A - B) - ao3,
-                -.5 * (A+B) - 1j * np.sqrt(3) / 2 * (A - B) - ao3]
+                (A + B) - ao3,
+                -0.5 * (A + B) + 1j * np.sqrt(3) / 2 * (A - B) - ao3,
+                -0.5 * (A + B) - 1j * np.sqrt(3) / 2 * (A - B) - ao3,
+            ]
     # Q & R complex, so also 1 real, 2 complex roots
     else:
         sqR2mQ3 = np.sqrt(R2 - Q3)
         if np.real(np.conj(R) * sqR2mQ3) >= 0:
-            A = -(R+sqR2mQ3)**(1/3)
+            A = -((R + sqR2mQ3) ** (1 / 3))
         else:
-            A = -(R-sqR2mQ3)**(1/3)
+            A = -((R - sqR2mQ3) ** (1 / 3))
         if A == 0:
             B = 0
         else:
-            B = Q/A
+            B = Q / A
         # one real root & two conjugate complex ones
         x = [
-            (A+B) - ao3,
-            -.5 * (A+B) + 1j * np.sqrt(3) / 2 * (A - B) - ao3,
-            -.5 * (A+B) - 1j * np.sqrt(3) / 2 * (A - B) - ao3
-                ]
+            (A + B) - ao3,
+            -0.5 * (A + B) + 1j * np.sqrt(3) / 2 * (A - B) - ao3,
+            -0.5 * (A + B) - 1j * np.sqrt(3) / 2 * (A - B) - ao3,
+        ]
     # parse real and/or int roots for tidy output
     for k in range(0, 3):
         if np.real(x[k]) == x[k]:
@@ -451,18 +500,18 @@ def quadraticEqn(a, b, c):
         # note np.sqrt(-1) = nan, so force complex argument
         if b:
             # std. sub-branch
-            q = -0.5*(b + np.sign(b) * np.sqrt(complex(b * b - 4 * a * c)))
+            q = -0.5 * (b + np.sign(b) * np.sqrt(complex(b * b - 4 * a * c)))
         else:
             # b = 0 sub-branch
             q = -np.sqrt(complex(-a * c))
     # complex coefficient branch
     else:
         if np.real(np.conj(b) * np.sqrt(b * b - 4 * a * c)) >= 0:
-            q = -0.5*(b + np.sqrt(b * b - 4 * a * c))
+            q = -0.5 * (b + np.sqrt(b * b - 4 * a * c))
         else:
-            q = -0.5*(b - np.sqrt(b * b - 4 * a * c))
+            q = -0.5 * (b - np.sqrt(b * b - 4 * a * c))
     # stable root solution
-    x = [q/a, c/q]
+    x = [q / a, c / q]
     # parse real and/or int roots for tidy output
     for k in 0, 1:
         if np.real(x[k]) == x[k]:
@@ -496,12 +545,12 @@ def quarticEqn(a, b, c, d):
     """
 
     # find *any* root of resolvent cubic
-    a2 = a*a
-    y = cubicEqn(-b, a*c - 4*d, (4*b - a2)*d - c*c)
+    a2 = a * a
+    y = cubicEqn(-b, a * c - 4 * d, (4 * b - a2) * d - c * c)
     y = y[0]
     # find R
     R = np.sqrt(a2 / 4 - (1 + 0j) * b + y)  # force complex in sqrt
-    foo = 3*a2/4 - R*R - 2*b
+    foo = 3 * a2 / 4 - R * R - 2 * b
     if R != 0:
         # R is already complex.
         D = np.sqrt(foo + (a * b - 2 * c - a2 * a / 4) / R)
@@ -510,10 +559,12 @@ def quarticEqn(a, b, c, d):
         sqrtTerm = 2 * np.sqrt(y * y - (4 + 0j) * d)  # force complex in sqrt
         D = np.sqrt(foo + sqrtTerm)
         E = np.sqrt(foo - sqrtTerm)
-    x = [-a/4 + R/2 + D/2,
-         -a/4 + R/2 - D/2,
-         -a/4 - R/2 + E/2,
-         -a/4 - R/2 - E/2]
+    x = [
+        -a / 4 + R / 2 + D / 2,
+        -a / 4 + R / 2 - D / 2,
+        -a / 4 - R / 2 + E / 2,
+        -a / 4 - R / 2 - E / 2,
+    ]
     # parse real and/or int roots for tidy output
     for k in range(0, 4):
         if np.real(x[k]) == x[k]:
@@ -556,14 +607,14 @@ def rthEllipse(a, b, x0, y0):
     """
 
     # set constants
-    A = 2/a**2
-    B = 2*x0/a**2
-    C = 2/b**2
-    D = 2*y0/b**2
-    E = (B*x0+D*y0)/2-1
-    F = C-A
-    G = A/2
-    H = C/2
+    A = 2 / a**2
+    B = 2 * x0 / a**2
+    C = 2 / b**2
+    D = 2 * y0 / b**2
+    E = (B * x0 + D * y0) / 2 - 1
+    F = C - A
+    G = A / 2
+    H = C / 2
     eExtrm = np.zeros((4,))
     eVec = np.zeros((4, 2))
     eps = np.finfo(np.float64).eps
@@ -576,11 +627,14 @@ def rthEllipse(a, b, x0, y0):
     # pursue circular or elliptical solutions
     if np.abs(F) <= circTol * eps:
         # circle
-        cent = np.sqrt(x0 ** 2 + y0 ** 2)
+        cent = np.sqrt(x0**2 + y0**2)
         eExtrm[0:2] = cent + np.array([-a, a])
-        eVec[0:2, :] = np.array([
-            [x0-a*x0/cent, y0-a*y0/cent],
-            [x0+a*x0/cent, y0+a*y0/cent]])
+        eVec[0:2, :] = np.array(
+            [
+                [x0 - a * x0 / cent, y0 - a * y0 / cent],
+                [x0 + a * x0 / cent, y0 + a * y0 / cent],
+            ]
+        )
     else:
         # ellipse
         # check for trivial distance sol'n
@@ -593,44 +647,54 @@ def rthEllipse(a, b, x0, y0):
         else:
             # use dual solutions of quartics to find best, real-valued results
             # solve quartic for y
-            fy = F**2*H
-            y = quarticEqn(-D*F*(2*H+F)/fy,
-                           (B**2*(G+F)+E*F**2+D**2*(H+2*F))/fy,
-                           -D*(B**2+2*E*F+D**2)/fy, (D**2*E)/fy)
+            fy = F**2 * H
+            y = quarticEqn(
+                -D * F * (2 * H + F) / fy,
+                (B**2 * (G + F) + E * F**2 + D**2 * (H + 2 * F)) / fy,
+                -D * (B**2 + 2 * E * F + D**2) / fy,
+                (D**2 * E) / fy,
+            )
             y = np.array([y[i] for i in list(np.where(y == np.real(y))[0])])
-            xy = B*y / (D-F*y)
+            xy = B * y / (D - F * y)
             # solve quartic for x
-            fx = F**2*G
-            x = quarticEqn(B*F*(2*G-F)/fx, (B**2*(G-2*F)+E*F**2+D**2*(H-F))/fx,
-                           B*(2*E*F-B**2-D**2)/fx, (B**2*E)/fx)
+            fx = F**2 * G
+            x = quarticEqn(
+                B * F * (2 * G - F) / fx,
+                (B**2 * (G - 2 * F) + E * F**2 + D**2 * (H - F)) / fx,
+                B * (2 * E * F - B**2 - D**2) / fx,
+                (B**2 * E) / fx,
+            )
             x = np.array([x[i] for i in list(np.where(x == np.real(x))[0])])
-            yx = D*x / (F*x+B)
+            yx = D * x / (F * x + B)
             # combine both approaches
-            distE = np.hstack(
-                (np.sqrt(x ** 2 + yx ** 2), np.sqrt(xy ** 2 + y ** 2)))
+            distE = np.hstack((np.sqrt(x**2 + yx**2), np.sqrt(xy**2 + y**2)))
             # trap real, but bogus sol's (esp. near Th = 180)
             distEidx = np.where(
-                (distE <= np.sqrt(x0 ** 2 + y0 ** 2)
-                 + np.max([a, b]) * (1 + magTol))
-                & (distE >= np.sqrt(x0 ** 2 + y0 ** 2)
-                   - np.max([a, b]) * (1 + magTol)))
+                (distE <= np.sqrt(x0**2 + y0**2) + np.max([a, b]) * (1 + magTol))
+                & (distE >= np.sqrt(x0**2 + y0**2) - np.max([a, b]) * (1 + magTol))
+            )
             coords = np.hstack(((x, yx), (xy, y))).T
             coords = coords[distEidx, :][0]
             distE = distE[distEidx]
             eExtrm[0:2] = [distE.min(), distE.max()]
             eVec[0:2, :] = np.vstack(
-                (coords[np.where(distE == distE.min()), :][0][0],
-                 coords[np.where(distE == distE.max()), :][0][0]))
+                (
+                    coords[np.where(distE == distE.min()), :][0][0],
+                    coords[np.where(distE == distE.max()), :][0][0],
+                )
+            )
     # angles subtended
     if x0 < 0:
         x0 = -x0
-        y = -np.array(quadraticEqn(D ** 2 + B ** 2 * H / G, 4 * D * E,
-                                   4 * E ** 2 - B ** 2 * E / G))
-        x = -np.sqrt(E / G - H / G * y ** 2)
+        y = -np.array(
+            quadraticEqn(D**2 + B**2 * H / G, 4 * D * E, 4 * E**2 - B**2 * E / G)
+        )
+        x = -np.sqrt(E / G - H / G * y**2)
     else:
-        y = -np.array(quadraticEqn(D ** 2 + B ** 2 * H / G, 4 * D * E,
-                                   4 * E ** 2 - B ** 2 * E / G))
-        x = np.sqrt(E / G - H / G * y ** 2)
+        y = -np.array(
+            quadraticEqn(D**2 + B**2 * H / G, 4 * D * E, 4 * E**2 - B**2 * E / G)
+        )
+        x = np.sqrt(E / G - H / G * y**2)
     eVec[2:, :] = np.vstack((np.real(x), np.real(y))).T
     # various quadrant fixes
     if x0 == 0 or np.abs(x0) - a < 0:
@@ -640,7 +704,23 @@ def rthEllipse(a, b, x0, y0):
     return eExtrm, eVec
 
 
-def post_process(dimension_number, co_array_num, alpha, h, nits, tau, xij, coeffs, lts_vel, lts_baz, element_weights, sigma_tau, p, conf_int_vel, conf_int_baz):
+def post_process(
+    dimension_number,
+    co_array_num,
+    alpha,
+    h,
+    nits,
+    tau,
+    xij,
+    coeffs,
+    lts_vel,
+    lts_baz,
+    element_weights,
+    sigma_tau,
+    p,
+    conf_int_vel,
+    conf_int_baz,
+):
 
     # Initial fit - correction factor to make LTS approximately unbiased
     raw_factor = raw_corfactor_lts(dimension_number, co_array_num, alpha)
@@ -667,16 +747,15 @@ def post_process(dimension_number, co_array_num, alpha, h, nits, tau, xij, coeff
         # Now use original arrays
         y_var = tau[:, jj, :]
 
-        residuals = y_var - (
-            X_var @ coeffs[:, jj].reshape(dimension_number, 1))
-        sor = np.sort(residuals.flatten()**2)
+        residuals = y_var - (X_var @ coeffs[:, jj].reshape(dimension_number, 1))
+        sor = np.sort(residuals.flatten() ** 2)
         s0 = np.sqrt(np.sum(sor[0:h]) / h) * raw_factor
 
         if np.abs(s0) < 1e-7:
-            weights = (np.abs(residuals) < 1e-7)
+            weights = np.abs(residuals) < 1e-7
             z_final = coeffs[:, jj].reshape(dimension_number, 1)
         else:
-            weights = (np.abs(residuals / s0) <= quantile)
+            weights = np.abs(residuals / s0) <= quantile
             weights = weights.flatten()
             # Cast logical to int
             weights_int = weights * 1
@@ -692,11 +771,13 @@ def post_process(dimension_number, co_array_num, alpha, h, nits, tau, xij, coeff
             # Final residuals
             residuals = y_var - (X_var @ z_final)
             weights_num = np.sum(weights_int)
-            scale = np.sqrt(np.sum(residuals[weights]**2) / (weights_num - 1))
+            scale = np.sqrt(np.sum(residuals[weights] ** 2) / (weights_num - 1))
             scale *= rew_factor1
             if weights_num != co_array_num:
                 # Final fit - correction factor to make LTS approximately normally distributed # noqa
-                rew_factor2 = rew_consfactor_lts(weights, dimension_number, co_array_num) # noqa
+                rew_factor2 = rew_consfactor_lts(
+                    weights, dimension_number, co_array_num
+                )  # noqa
                 scale *= rew_factor2
             weights = np.abs(residuals / scale) <= 2.5
             weights = weights.flatten()
@@ -707,7 +788,7 @@ def post_process(dimension_number, co_array_num, alpha, h, nits, tau, xij, coeff
         # y-component of slowness vector
         sy = z_final[1][0]
         # Calculate trace velocity from slowness
-        lts_vel[jj] = 1/np.linalg.norm(z_final, 2)
+        lts_vel[jj] = 1 / np.linalg.norm(z_final, 2)
         # Convert baz from mathematical CCW from E
         # to geographical CW from N. baz = arctan(sx/sy)
         lts_baz[jj] = (np.arctan2(sx, sy) * 180 / np.pi - 360) % 360
@@ -716,16 +797,21 @@ def post_process(dimension_number, co_array_num, alpha, h, nits, tau, xij, coeff
         # Compute co-array eigendecomp. for uncertainty calcs.
         c_eig_vals, c_eig_vecs = np.linalg.eigh(xij[weights, :].T @ xij[weights, :])
         eig_vec_ang = np.arctan2(c_eig_vecs[1, 0], c_eig_vecs[0, 0])
-        R = np.array([[np.cos(eig_vec_ang), np.sin(eig_vec_ang)],
-                      [-np.sin(eig_vec_ang), np.cos(eig_vec_ang)]])
+        R = np.array(
+            [
+                [np.cos(eig_vec_ang), np.sin(eig_vec_ang)],
+                [-np.sin(eig_vec_ang), np.cos(eig_vec_ang)],
+            ]
+        )
 
         # Calculate the sigma_tau value (Szuberla et al. 2006).
         residuals = tau[weights, jj, :] - (xij[weights, :] @ z_final)
         m_w, _ = np.shape(xij[weights, :])
-        with np.errstate(invalid='raise'):
+        with np.errstate(invalid="raise"):
             try:
-                sigma_tau[jj] = np.sqrt(tau[weights, jj, :].T @ residuals / (
-                    m_w - dimension_number))[0]
+                sigma_tau[jj] = np.sqrt(
+                    tau[weights, jj, :].T @ residuals / (m_w - dimension_number)
+                )[0]
             except FloatingPointError:
                 pass
 
@@ -742,13 +828,15 @@ def post_process(dimension_number, co_array_num, alpha, h, nits, tau, xij, coeff
             eExtrm, eVec = rthEllipse(a, b, So[0], So[1])
         except ValueError:
             eExtrm = np.array([np.nan, np.nan, np.nan, np.nan])
-            eVec = np.array([[np.nan, np.nan], [np.nan, np.nan], [np.nan, np.nan], [np.nan, np.nan]])
+            eVec = np.array(
+                [[np.nan, np.nan], [np.nan, np.nan], [np.nan, np.nan], [np.nan, np.nan]]
+            )
         # Rotate eigenvectors back to original orientation
         eVec = eVec @ R
         # Fix up angle calculations
-        sig_theta = np.abs(np.diff(
-            (np.arctan2(eVec[2:, 1], eVec[2:, 0]) * 180 / np.pi - 360)
-            % 360))
+        sig_theta = np.abs(
+            np.diff((np.arctan2(eVec[2:, 1], eVec[2:, 0]) * 180 / np.pi - 360) % 360)
+        )
         if sig_theta > 180:
             sig_theta = np.abs(sig_theta - 360)
 
@@ -765,7 +853,7 @@ def post_process(dimension_number, co_array_num, alpha, h, nits, tau, xij, coeff
 
 
 def array_from_weights(weightarray, idx):
-    """ Return array element pairs from LTS weights.
+    """Return array element pairs from LTS weights.
 
     Args:
         weightarray (array): An m x 0 array of the
@@ -797,11 +885,11 @@ def array_from_weights(weightarray, idx):
 # Class definitions
 ##################
 class LsBeam:
-    """ Base class for least squares beamforming. This class is not meant to be used directly. """
+    """Base class for least squares beamforming. This class is not meant to be used directly."""
 
     def __init__(self, data):
         # 2D Beamforming (trace_velocity and back-azimuth)
-        self.dimension_number = 2
+        self.dimension_number = 3  # UPDATED FOR 3D
         # Pre-allocate Arrays
         # Median of the cross-correlation maxima
         self.mdccm = np.full(data.nits, np.nan)
@@ -811,8 +899,10 @@ class LsBeam:
         self.lts_vel = np.full(data.nits, np.nan)
         # Back-azimuth [degrees]
         self.lts_baz = np.full(data.nits, np.nan)
+        # Back-zenith [degrees] (0 is horizontal, 90 is straight up, can be negative as well)
+        self.lts_elev = np.full(data.nits, np.nan)
         # Calculate co-array and indices
-        self.calculate_co_array(data)
+        self.calculate_co_array(data)  # defines xij, xij_mad, and xij_standardized
         # Co-array size is N choose 2, N = num. of array elements
         self.co_array_num = int((data.nchans * (data.nchans - 1)) / 2)
         # Pre-allocate time delays
@@ -823,6 +913,8 @@ class LsBeam:
         self.conf_int_vel = np.full(data.nits, np.nan)
         # Confidence interval for back-azimuth
         self.conf_int_baz = np.full(data.nits, np.nan)
+        # Confidence interval for back-zenith
+        self.conf_int_elev = np.full(data.nits, np.nan)
         # Pre-allocate for sigma-tau
         self.sigma_tau = np.full(data.nits, np.nan)
         # Specify station dictionary to maintain cross-compatibility
@@ -830,34 +922,47 @@ class LsBeam:
         # Confidence value for uncertainty calculation
         self.p = 0.90
         # Check co-array rank for least squares problem
-        if (np.linalg.matrix_rank(self.xij) < self.dimension_number):
-            raise RuntimeError('Co-array is ill posed for the least squares problem. Check array coordinates. xij rank < ' + str(self.dimension_number))
+        if np.linalg.matrix_rank(self.xij) < self.dimension_number:
+            raise RuntimeError(
+                "Co-array is ill posed for the least squares problem. Check array coordinates. xij rank < "
+                + str(self.dimension_number)
+            )
 
-    def calculate_co_array(self, data):
-        """ Calculate the co-array coordinates (x, y) for the array.
+    def calculate_co_array(self, data):  # TODO UPDATE FOR 3d
+        """Calculate the co-array coordinates (x, y) for the array.
+        data shapes:
+            xij → (n_pairs, dim)
+            xij_mad → (dim,)
+            xij_standardized → (n_pairs, dim)
         """
         # Calculate element pair indices
-        self.idx_pair = [(ii, jj) for ii in range(data.nchans - 1) for jj in range(ii + 1, data.nchans)] # noqa
+        self.idx_pair = [
+            (ii, jj)
+            for ii in range(data.nchans - 1)
+            for jj in range(ii + 1, data.nchans)
+        ]  # noqa
         # Calculate the co-array
-        self.xij = data.rij[:, np.array([ii[0] for ii in self.idx_pair])] - data.rij[:, np.array([jj[1] for jj in self.idx_pair])] # noqa
+        self.xij = (
+            data.rij[:, np.array([ii[0] for ii in self.idx_pair])]
+            - data.rij[:, np.array([jj[1] for jj in self.idx_pair])]
+        )  # noqa
         self.xij = self.xij.T
         # Calculate median absolute deviation and standardized
         # co-array coordinates for least squares fit.
         self.xij_standardized = np.zeros_like(self.xij)
-        self.xij_mad = np.zeros(2)
+        self.xij_mad = np.zeros(self.dimension_number)  # modified
         for jj in range(0, self.dimension_number):
             self.xij_mad[jj] = 1.4826 * np.median(np.abs(self.xij[:, jj]))
             self.xij_standardized[:, jj] = self.xij[:, jj] / self.xij_mad[jj]
 
     def correlate(self, data):
-        """ Cross correlate the time series data.
-        """
+        """Cross correlate the time series data."""
         for jj in range(0, data.nits):
             # Get time from middle of window, except for the end.
             t0_ind = data.intervals[jj]
             tf_ind = data.intervals[jj] + data.winlensamp
             try:
-                self.t[jj] = data.tvec[t0_ind + int(data.winlensamp/2)]
+                self.t[jj] = data.tvec[t0_ind + int(data.winlensamp / 2)]
             except:
                 self.t[jj] = np.nanmax(self.t, axis=0)
 
@@ -868,20 +973,32 @@ class LsBeam:
             for k in range(self.co_array_num):
                 # MATLAB's xcorr w/ 'coeff' normalization:
                 # unit auto-correlations.
-                self.cij[:, k] = (np.correlate(data.data[t0_ind:tf_ind, self.idx_pair[k][0]], data.data[t0_ind:tf_ind, self.idx_pair[k][1]], mode='full') / np.sqrt(np.sum(data.data[t0_ind:tf_ind, self.idx_pair[k][0]] * data.data[t0_ind:tf_ind, self.idx_pair[k][0]]) * np.sum(data.data[t0_ind:tf_ind, self.idx_pair[k][1]] * data.data[t0_ind:tf_ind, self.idx_pair[k][1]]))) # noqa
+                self.cij[:, k] = np.correlate(
+                    data.data[t0_ind:tf_ind, self.idx_pair[k][0]],
+                    data.data[t0_ind:tf_ind, self.idx_pair[k][1]],
+                    mode="full",
+                ) / np.sqrt(
+                    np.sum(
+                        data.data[t0_ind:tf_ind, self.idx_pair[k][0]]
+                        * data.data[t0_ind:tf_ind, self.idx_pair[k][0]]
+                    )
+                    * np.sum(
+                        data.data[t0_ind:tf_ind, self.idx_pair[k][1]]
+                        * data.data[t0_ind:tf_ind, self.idx_pair[k][1]]
+                    )
+                )  # noqa
             # Find the median of the cross-correlation maxima
             self.mdccm[jj] = np.nanmedian(self.cij.max(axis=0))
             # Form the time delay vector and save it
             delay = np.argmax(self.cij, axis=0) + 1
             self.tau[:, jj] = (data.winlensamp - delay) / data.sampling_rate
-            self.time_delay_mad[jj] = 1.4826 * np.median(
-                np.abs(self.tau[:, jj]))
+            self.time_delay_mad[jj] = 1.4826 * np.median(np.abs(self.tau[:, jj]))
 
         self.tau = np.reshape(self.tau, (self.co_array_num, data.nits, 1))
 
 
 class OLSEstimator(LsBeam):
-    """ Class for ordinary least squares beamforming."""
+    """Class for ordinary least squares beamforming."""
 
     def __init__(self, data):
         super().__init__(data)
@@ -889,7 +1006,7 @@ class OLSEstimator(LsBeam):
         self.q_xij, self.r_xij = np.linalg.qr(self.xij_standardized)
 
     def solve(self, data):
-        """ Calculate trace velocity, back-azimuth, MdCCM, and confidence intervals.
+        """Calculate trace velocity, back-azimuth, MdCCM, and confidence intervals.
 
         Args:
             data (DataBin): The DataBin object.
@@ -898,8 +1015,12 @@ class OLSEstimator(LsBeam):
         # Pre-compute co-array eigendecomp. for uncertainty calcs.
         c_eig_vals, c_eig_vecs = np.linalg.eigh(self.xij.T @ self.xij)
         eig_vec_ang = np.arctan2(c_eig_vecs[1, 0], c_eig_vecs[0, 0])
-        R = np.array([[np.cos(eig_vec_ang), np.sin(eig_vec_ang)],
-                      [-np.sin(eig_vec_ang), np.cos(eig_vec_ang)]])
+        R = np.array(
+            [
+                [np.cos(eig_vec_ang), np.sin(eig_vec_ang)],
+                [-np.sin(eig_vec_ang), np.cos(eig_vec_ang)],
+            ]
+        )
         # Chi^2; default is 90% confidence (p = 0.90)
         # Special closed form for 2 degrees of freedom
         chi2 = -2 * np.log(1 - self.p)
@@ -908,7 +1029,9 @@ class OLSEstimator(LsBeam):
         for jj in range(data.nits):
 
             # Check for data spike.
-            if (self.time_delay_mad[jj] == 0) or (np.count_nonzero(self.tau[:, jj, :]) < (self.co_array_num - 2)):
+            if (self.time_delay_mad[jj] == 0) or (
+                np.count_nonzero(self.tau[:, jj, :]) < (self.co_array_num - 2)
+            ):
                 # We have a data spike, so do not process.
                 continue
 
@@ -918,22 +1041,25 @@ class OLSEstimator(LsBeam):
 
             # Correct coefficients from standardization
             for ii in range(0, self.dimension_number):
-                z_final[ii] *= self.time_delay_mad[jj] / self.xij_mad[ii] # noqa
+                z_final[ii] *= self.time_delay_mad[jj] / self.xij_mad[ii]  # noqa
 
             # x-component of slowness vector
             sx = z_final[0][0]
             # y-component of slowness vector
             sy = z_final[1][0]
             # Calculate trace velocity from slowness
-            self.lts_vel[jj] = 1/np.linalg.norm(z_final, 2)
+            self.lts_vel[jj] = 1 / np.linalg.norm(z_final, 2)
             # Convert baz from mathematical CCW from E
             # to geographical CW from N. baz = arctan(sx/sy)
             self.lts_baz[jj] = (np.arctan2(sx, sy) * 180 / np.pi - 360) % 360
 
             # Calculate the sigma_tau value (Szuberla et al. 2006).
             residuals = self.tau[:, jj, :] - (self.xij @ z_final)
-            self.sigma_tau[jj] = np.sqrt(self.tau[:, jj, :].T @ residuals / (
-                self.co_array_num - self.dimension_number))[0]
+            self.sigma_tau[jj] = np.sqrt(
+                self.tau[:, jj, :].T
+                @ residuals
+                / (self.co_array_num - self.dimension_number)
+            )[0]
 
             # Calculate uncertainties from Szuberla & Olson, 2004
             # Equation 16
@@ -951,9 +1077,11 @@ class OLSEstimator(LsBeam):
                 # Rotate eigenvectors back to original orientation
                 eVec = eVec @ R
                 # Fix up angle calculations
-                sig_theta = np.abs(np.diff(
-                    (np.arctan2(eVec[2:, 1], eVec[2:, 0]) * 180 / np.pi - 360)
-                    % 360))
+                sig_theta = np.abs(
+                    np.diff(
+                        (np.arctan2(eVec[2:, 1], eVec[2:, 0]) * 180 / np.pi - 360) % 360
+                    )
+                )
                 if sig_theta > 180:
                     sig_theta = np.abs(sig_theta - 360)
 
@@ -967,10 +1095,138 @@ class OLSEstimator(LsBeam):
                 self.conf_int_baz[jj] = np.nan
                 self.conf_int_vel[jj] = np.nan
 
+    def solve_3d(self, data):
+        """
+        3D OLS beamforming: estimates trace velocity, azimuth (CW from North),
+        elevation (positive upward from horizontal), MdCCM-like misfit, and
+        confidence intervals for azimuth, elevation, and velocity.
+
+        Args:
+            data (DataBin): The DataBin object.
+        """
+
+        # --- Geometry / uncertainty precomputations (3D) ---
+        # Normal equations matrix and eigendecomposition (for conditioning info)
+        XtX = self.xij.T @ self.xij  # shape: (3,3)
+        c_eig_vals, c_eig_vecs = np.linalg.eigh(
+            XtX
+        )  # unused in CI directly, but useful for diagnostics
+
+        # Chi-square scaling for two-sided 1-parameter intervals:
+        # sqrt(chi2_{1, p}) ~ z_{p} (e.g., p=0.90 -> ~1.643). Keep consistent with 2D code's 'self.p'.
+        # If you prefer, replace with scipy.stats.chi2.ppf(self.p, df=1)**0.5
+        chi2_1df = 2.705543454095404  # χ²(0.90, 1) ≈ 2.7055
+        ci_scale = np.sqrt(chi2_1df)
+
+        # Loop through time
+        for jj in range(data.nits):
+
+            # Skip spikes / insufficient data
+            if (self.time_delay_mad[jj] == 0) or (
+                np.count_nonzero(self.tau[:, jj, :]) < (self.co_array_num - 3)
+            ):
+                continue
+
+            # Normalize observed pairwise delays by robust scale
+            y_var = self.tau[:, jj, :] / self.time_delay_mad[jj]  # shape: (n_pairs, 1)
+
+            # Fast/stable OLS via precomputed QR of standardized geometry
+            qt = self.q_xij.conj().T @ y_var  # shape: (D,1) with D=3
+            z_final = lstsq(self.r_xij, qt)[
+                0
+            ]  # slowness in standardized units, shape: (3,1)
+
+            # Undo standardization (per-dimension MAD and per-time MAD)
+            for ii in range(self.dimension_number):  # D=3
+                z_final[ii] *= self.time_delay_mad[jj] / self.xij_mad[ii]
+
+            # Slowness components
+            sx = float(z_final[0])
+            sy = float(z_final[1])
+            sz = float(z_final[2])
+
+            # Trace velocity (3D norm of slowness)
+            s_norm = np.linalg.norm([sx, sy, sz], 2)
+            if s_norm == 0:
+                # Degenerate; skip this time
+                continue
+            self.lts_vel[jj] = 1.0 / s_norm
+
+            # Direction: azimuth (CW from North) and elevation (+ up from horizontal)
+            # Azimuth convention matches your 2D case (atan2(sx, sy))
+            self.lts_baz[jj] = (np.degrees(np.arctan2(sx, sy)) - 360.0) % 360.0
+
+            # Elevation θ = atan2(sz, sqrt(sx^2 + sy^2))
+            r_xy = np.hypot(sx, sy)
+            self.lts_elev[jj] = (
+                np.degrees(np.arctan2(sz, r_xy))
+                if (r_xy > 0)
+                else (90.0 if sz > 0 else (-90.0 if sz < 0 else 0.0))
+            )
+
+            # Residuals and robust time-delay scatter (Szuberla et al.)
+            residuals = self.tau[:, jj, :] - (self.xij @ z_final)  # shape: (n_pairs, 1)
+            dof = max(self.co_array_num - self.dimension_number, 1)  # guard
+            self.sigma_tau[jj] = float(
+                np.sqrt((self.tau[:, jj, :].T @ residuals) / dof)[0]
+            )
+
+            # --- Uncertainty propagation in 3D ---
+            # Slowness covariance: Cov(z) ≈ sigma_tau^2 * (X^T X)^{-1}
+            try:
+                XtX_inv = np.linalg.inv(XtX)
+            except np.linalg.LinAlgError:
+                # Ill-conditioned geometry; fall back to pseudo-inverse
+                XtX_inv = np.linalg.pinv(XtX)
+
+            Cov_z = (self.sigma_tau[jj] ** 2) * XtX_inv  # shape: (3,3)
+
+            # Jacobians for azimuth (ψ), elevation (θ), and velocity (v = 1/||s||)
+            # ψ = atan2(sx, sy)
+            denom_az = sx * sx + sy * sy
+            if denom_az == 0:
+                var_az = np.inf
+            else:
+                J_az = np.array([sy / denom_az, -sx / denom_az, 0.0])  # dψ/d[sx,sy,sz]
+                var_az = J_az @ Cov_z @ J_az.T
+
+            # θ = atan2(sz, r_xy), r_xy = sqrt(sx^2 + sy^2)
+            if (r_xy == 0) and (sz == 0):
+                var_el = np.inf
+            else:
+                norm2 = s_norm * s_norm
+                # dθ/dsx = -sz*sx/(r_xy*||s||^2), dθ/dsy = -sz*sy/(r_xy*||s||^2), dθ/dsz = r_xy/||s||^2
+                if r_xy == 0:
+                    J_el = np.array(
+                        [0.0, 0.0, 1.0 / max(s_norm, 1e-12)]
+                    )  # limit as r_xy->0
+                else:
+                    J_el = np.array(
+                        [
+                            -sz * sx / (r_xy * norm2),
+                            -sz * sy / (r_xy * norm2),
+                            r_xy / norm2,
+                        ]
+                    )
+                var_el = J_el @ Cov_z @ J_el.T
+
+            # v = 1/||s|| -> dv/ds = -s / ||s||^3
+            J_v = -np.array([sx, sy, sz]) / (s_norm**3)
+            var_v = J_v @ Cov_z @ J_v.T
+
+            # Confidence intervals (two-sided) via sqrt(χ²_1df(p)) * std
+            # Convert az/el to degrees
+            std_az_deg = np.degrees(np.sqrt(var_az)) if np.isfinite(var_az) else np.nan
+            std_el_deg = np.degrees(np.sqrt(var_el)) if np.isfinite(var_el) else np.nan
+            std_v = float(np.sqrt(var_v)) if np.isfinite(var_v) else np.nan
+
+            self.conf_int_baz[jj] = ci_scale * std_az_deg
+            self.conf_int_elev[jj] = ci_scale * std_el_deg
+            self.conf_int_vel[jj] = ci_scale * std_v
+
 
 class LTSEstimator(LsBeam):
-    """ Class for least trimmed squares (LTS) beamforming.
-    """
+    """Class for least trimmed squares (LTS) beamforming."""
 
     def __init__(self, data):
         super().__init__(data)
@@ -981,10 +1237,14 @@ class LTSEstimator(LsBeam):
         # Raise error if a LTS object is instantiated with ALPHA = 1.0.
         # The ordinary least squares code should be used instead
         if data.alpha == 1.0:
-            raise RuntimeError('ALPHA = 1.0. This class is computionally inefficient. Use the OLSEstimator class instead.')
+            raise RuntimeError(
+                "ALPHA = 1.0. This class is computionally inefficient. Use the OLSEstimator class instead."
+            )
         # Raise error if there are too few data points for subsetting
         if np.shape(self.xij)[0] < (2 * self.dimension_number):
-            raise RuntimeError('The co-array must have at least 4 elements for least trimmed squares. Check rij array coordinates.')
+            raise RuntimeError(
+                "The co-array must have at least 4 elements for least trimmed squares. Check rij array coordinates."
+            )
         # Calculate the subset size.
         self.h_calc(data)
         # The number of subsets we will test.
@@ -994,10 +1254,10 @@ class LTSEstimator(LsBeam):
         # The initial number of concentration steps.
         self.csteps = 4
         # The number of concentration steps for the second stage.
-        self. csteps2 = 100
+        self.csteps2 = 100
 
     def h_calc(self, data):
-        r""" Generate the h-value, the number of points to fit.
+        r"""Generate the h-value, the number of points to fit.
 
         Args:
             ALPHA (float): The decimal percentage of points
@@ -1010,27 +1270,76 @@ class LTSEstimator(LsBeam):
             ``h``: The number of points to fit.
         """
 
-        self.h = int(np.floor(2*np.floor((self.co_array_num + self.dimension_number + 1) / 2) - self.co_array_num + 2 * (self.co_array_num - np.floor((self.co_array_num + self.dimension_number + 1) / 2)) * data.alpha)) # noqa
+        self.h = int(
+            np.floor(
+                2 * np.floor((self.co_array_num + self.dimension_number + 1) / 2)
+                - self.co_array_num
+                + 2
+                * (
+                    self.co_array_num
+                    - np.floor((self.co_array_num + self.dimension_number + 1) / 2)
+                )
+                * data.alpha
+            )
+        )  # noqa
 
     def solve(self, data):
-        """ Apply the FAST_LTS algorithm to calculate a least trimmed squares solution for trace velocity, back-azimuth, MdCCM, and confidence intervals.
+        """Apply the FAST_LTS algorithm to calculate a least trimmed squares solution for trace velocity, back-azimuth, MdCCM, and confidence intervals.
 
         Args:
             data (DataBin): The DataBin object.
         """
         # Determine the best slowness coefficients from FAST-LTS
-        self.slowness_coeffs = fast_LTS(data.nits, self.tau, self.time_delay_mad, self.xij_standardized, self.xij_mad, self.dimension_number, self.candidate_size, self.n_samples, self.co_array_num, self.slowness_coeffs, self.csteps, self.h, self.csteps2, random_set, check_array) # noqa
+        self.slowness_coeffs = fast_LTS(
+            data.nits,
+            self.tau,
+            self.time_delay_mad,
+            self.xij_standardized,
+            self.xij_mad,
+            self.dimension_number,
+            self.candidate_size,
+            self.n_samples,
+            self.co_array_num,
+            self.slowness_coeffs,
+            self.csteps,
+            self.h,
+            self.csteps2,
+            random_set,
+            check_array,
+        )  # noqa
         # Use the best slowness coefficients to determine dropped stations
         # Calculate uncertainties at 90% confidence
-        self.lts_vel, self.lts_baz, self.element_weights, self.sigma_tau, self.conf_int_vel, self.conf_int_baz = post_process(self.dimension_number, self.co_array_num, data.alpha, self.h, data.nits, self.tau, self.xij, self.slowness_coeffs, self.lts_vel, self.lts_baz, self.element_weights, self.sigma_tau, self.p, self.conf_int_vel, self.conf_int_baz) # noqa
+        (
+            self.lts_vel,
+            self.lts_baz,
+            self.element_weights,
+            self.sigma_tau,
+            self.conf_int_vel,
+            self.conf_int_baz,
+        ) = post_process(
+            self.dimension_number,
+            self.co_array_num,
+            data.alpha,
+            self.h,
+            data.nits,
+            self.tau,
+            self.xij,
+            self.slowness_coeffs,
+            self.lts_vel,
+            self.lts_baz,
+            self.element_weights,
+            self.sigma_tau,
+            self.p,
+            self.conf_int_vel,
+            self.conf_int_baz,
+        )  # noqa
         # Find dropped stations from weights
         # Map dropped data points back to elements.
         for jj in range(0, data.nits):
-            stns = array_from_weights(
-                self.element_weights[:, jj], self.idx_pair)
+            stns = array_from_weights(self.element_weights[:, jj], self.idx_pair)
             # Stash the number of elements for plotting.
             if len(stns) > 0:
                 tval = str(self.t[jj])
                 self.stdict[tval] = stns
             if jj == (data.nits - 1) and data.alpha != 1.0:
-                self.stdict['size'] = data.nchans
+                self.stdict["size"] = data.nchans
