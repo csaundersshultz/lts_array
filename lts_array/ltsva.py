@@ -11,7 +11,7 @@ def ltsva(
     st,
     lat_list,
     lon_list,
-    elev_list,
+    elev_list, #TODO This needs to be made optional, not sure the best way to do this. I like the ordering here.
     window_length,
     window_overlap,
     alpha=1.0,
@@ -70,19 +70,30 @@ def ltsva(
     else:
         # Least Trimmed Squares
         ltsva = LTSEstimator(data)
-    ltsva.correlate(data)
-    # ltsva.solve(data)
-    ltsva.solve_3d(data)
-
-    return (
-        ltsva.lts_vel,
-        ltsva.lts_baz,
-        ltsva.lts_elev,
-        ltsva.t,
-        ltsva.mdccm,
-        ltsva.stdict,
-        ltsva.sigma_tau,
-        ltsva.conf_int_vel,
-        ltsva.conf_int_baz,
-        ltsva.conf_int_elev,
-    )
+    ltsva.correlate(data)  # Note, correlate results are consistent with/without elev_list, as it should be
+    if len(data.rij) == 2:  # 2d case
+        ltsva.solve(data)
+        return (
+            ltsva.lts_vel,
+            ltsva.lts_baz,
+            ltsva.t,
+            ltsva.mdccm,
+            ltsva.stdict,
+            ltsva.sigma_tau,
+            ltsva.conf_int_vel,
+            ltsva.conf_int_baz,
+        )  # Does not include elevation angle
+    elif len(data.rij) == 3:  # 3d case
+        ltsva.solve_3d(data)
+        return (
+            ltsva.lts_vel,
+            ltsva.lts_baz,
+            ltsva.lts_elev,
+            ltsva.t,
+            ltsva.mdccm,
+            ltsva.stdict,
+            ltsva.sigma_tau,
+            #ltsva.conf_int_vel,
+            #ltsva.conf_int_baz,
+            #ltsva.conf_int_elev,
+        )  # Confidence intervals not updated yet

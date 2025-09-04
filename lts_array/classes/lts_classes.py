@@ -889,7 +889,7 @@ class LsBeam:
 
     def __init__(self, data):
         # 2D Beamforming (trace_velocity and back-azimuth)
-        self.dimension_number = 3  # UPDATED FOR 3D
+        self.dimension_number = len(data.rij)  # Should evaluate to 2 or 3!
         # Pre-allocate Arrays
         # Median of the cross-correlation maxima
         self.mdccm = np.full(data.nits, np.nan)
@@ -931,9 +931,9 @@ class LsBeam:
     def calculate_co_array(self, data):  # TODO UPDATE FOR 3d
         """Calculate the co-array coordinates (x, y) for the array.
         data shapes:
-            xij → (n_pairs, dim)
-            xij_mad → (dim,)
-            xij_standardized → (n_pairs, dim)
+            xij → (n_pairs, dim) # relative sensor locations for all pairs of stations (6c2=15), still in km
+            xij_mad → (dim,) # median absolute deviation for each dimension (x,y,z)
+            xij_standardized → (n_pairs, dim) # sensor location pairs, divided by the MAD in each dimension
         """
         # Calculate element pair indices
         self.idx_pair = [
@@ -1013,14 +1013,16 @@ class OLSEstimator(LsBeam):
         """
 
         # Pre-compute co-array eigendecomp. for uncertainty calcs.
-        c_eig_vals, c_eig_vecs = np.linalg.eigh(self.xij.T @ self.xij)
+        # eigenvectors and values for the co-array, describe principle components of co-array vectors.
+        c_eig_vals, c_eig_vecs = np.linalg.eigh(self.xij.T @ self.xij) 
+        #Angle of the first principle component in xy plane, used for calculating rotation matrix
+        #TODO - this needs to be expanded to 3d
         eig_vec_ang = np.arctan2(c_eig_vecs[1, 0], c_eig_vecs[0, 0])
+        #calculate rotation matrix TODO(3d)
         R = np.array(
-            [
-                [np.cos(eig_vec_ang), np.sin(eig_vec_ang)],
-                [-np.sin(eig_vec_ang), np.cos(eig_vec_ang)],
-            ]
-        )
+            [[np.cos(eig_vec_ang), np.sin(eig_vec_ang)], #new x = (cos(theta), sin(theta))
+            [-np.sin(eig_vec_ang), np.cos(eig_vec_ang)]]) #new y = (-sin(theta), cos(theta))
+        # Rotation matrix (2,2), multipied with 2d points rotates them by eig_vec_angle
         # Chi^2; default is 90% confidence (p = 0.90)
         # Special closed form for 2 degrees of freedom
         chi2 = -2 * np.log(1 - self.p)
@@ -1030,10 +1032,8 @@ class OLSEstimator(LsBeam):
 
             # Check for data spike.
             if (self.time_delay_mad[jj] == 0) or (
-                np.count_nonzero(self.tau[:, jj, :]) < (self.co_array_num - 2)
-            ):
-                # We have a data spike, so do not process.
-                continue
+                np.count_nonzero(self.tau[:, jj, :]) < (self.co_array_num - 2)):
+                continue # We have a data spike, so do not process.
 
             y_var = self.tau[:, jj, :] / self.time_delay_mad[jj]
             qt = self.q_xij.conj().T @ y_var
@@ -1055,11 +1055,7 @@ class OLSEstimator(LsBeam):
 
             # Calculate the sigma_tau value (Szuberla et al. 2006).
             residuals = self.tau[:, jj, :] - (self.xij @ z_final)
-            self.sigma_tau[jj] = np.sqrt(
-                self.tau[:, jj, :].T
-                @ residuals
-                / (self.co_array_num - self.dimension_number)
-            )[0]
+            self.sigma_tau[jj] = np.sqrt(self.tau[:, jj, :].T@ residuals/ (self.co_array_num - self.dimension_number))[0]
 
             # Calculate uncertainties from Szuberla & Olson, 2004
             # Equation 16
@@ -1070,6 +1066,14 @@ class OLSEstimator(LsBeam):
             # Rotate uncertainty ellipse to align major/minor axes
             # along coordinate system axes
             So = R @ [sx, sy]
+            #save these so we can plot #TODO: DELETE LATER
+            self.sx = sx
+            self.sy = sy
+            self.a = a
+            self.b = b
+            self.R = R
+            self.residuals = residuals
+
             # Find angle & slowness extrema
             try:
                 # rthEllipse routine can be unstable; catch instabilities
@@ -1105,124 +1109,47 @@ class OLSEstimator(LsBeam):
             data (DataBin): The DataBin object.
         """
 
-        # --- Geometry / uncertainty precomputations (3D) ---
-        # Normal equations matrix and eigendecomposition (for conditioning info)
-        XtX = self.xij.T @ self.xij  # shape: (3,3)
-        c_eig_vals, c_eig_vecs = np.linalg.eigh(
-            XtX
-        )  # unused in CI directly, but useful for diagnostics
-
-        # Chi-square scaling for two-sided 1-parameter intervals:
-        # sqrt(chi2_{1, p}) ~ z_{p} (e.g., p=0.90 -> ~1.643). Keep consistent with 2D code's 'self.p'.
-        # If you prefer, replace with scipy.stats.chi2.ppf(self.p, df=1)**0.5
-        chi2_1df = 2.705543454095404  # χ²(0.90, 1) ≈ 2.7055
-        ci_scale = np.sqrt(chi2_1df)
-
         # Loop through time
         for jj in range(data.nits):
-
-            # Skip spikes / insufficient data
+            # Check for data spike.
             if (self.time_delay_mad[jj] == 0) or (
-                np.count_nonzero(self.tau[:, jj, :]) < (self.co_array_num - 3)
-            ):
-                continue
+                np.count_nonzero(self.tau[:, jj, :]) < (self.co_array_num - 3)):
+                continue # We have a data spike, so do not process.
 
-            # Normalize observed pairwise delays by robust scale
-            y_var = self.tau[:, jj, :] / self.time_delay_mad[jj]  # shape: (n_pairs, 1)
+            # Normalize tau by MAD
+            y_var = self.tau[:, jj, :] / self.time_delay_mad[jj]
 
-            # Fast/stable OLS via precomputed QR of standardized geometry
-            qt = self.q_xij.conj().T @ y_var  # shape: (D,1) with D=3
-            z_final = lstsq(self.r_xij, qt)[
-                0
-            ]  # slowness in standardized units, shape: (3,1)
+            # Project into array space
+            qt = self.q_xij.conj().T @ y_var
 
-            # Undo standardization (per-dimension MAD and per-time MAD)
-            for ii in range(self.dimension_number):  # D=3
+            # Solve least squares for 3D slowness vector
+            z_final = lstsq(self.r_xij, qt)[0]
+
+            # Correct coefficients from standardization
+            for ii in range(0, self.dimension_number):
                 z_final[ii] *= self.time_delay_mad[jj] / self.xij_mad[ii]
 
-            # Slowness components
-            sx = float(z_final[0])
-            sy = float(z_final[1])
-            sz = float(z_final[2])
+            # Components of slowness vector
+            sx = z_final[0][0]
+            sy = z_final[1][0]
+            sz = z_final[2][0]
 
-            # Trace velocity (3D norm of slowness)
-            s_norm = np.linalg.norm([sx, sy, sz], 2)
-            if s_norm == 0:
-                # Degenerate; skip this time
-                continue
-            self.lts_vel[jj] = 1.0 / s_norm
+            # Trace velocity = 1 / ||slowness||
+            self.lts_vel[jj] = 1 / np.linalg.norm(z_final, 2)
 
-            # Direction: azimuth (CW from North) and elevation (+ up from horizontal)
-            # Azimuth convention matches your 2D case (atan2(sx, sy))
-            self.lts_baz[jj] = (np.degrees(np.arctan2(sx, sy)) - 360.0) % 360.0
+            # Back-azimuth (horizontal angle, CW from North)
+            self.lts_baz[jj] = (np.arctan2(sx, sy) * 180 / np.pi - 360) % 360
 
-            # Elevation θ = atan2(sz, sqrt(sx^2 + sy^2))
-            r_xy = np.hypot(sx, sy)
-            self.lts_elev[jj] = (
-                np.degrees(np.arctan2(sz, r_xy))
-                if (r_xy > 0)
-                else (90.0 if sz > 0 else (-90.0 if sz < 0 else 0.0))
-            )
+            # Elevation angle (up from horizontal plane)
+            horiz_norm = np.sqrt(sx**2 + sy**2)
+            self.lts_elev[jj] = np.arctan2(sz, horiz_norm) * 180 / np.pi
 
-            # Residuals and robust time-delay scatter (Szuberla et al.)
-            residuals = self.tau[:, jj, :] - (self.xij @ z_final)  # shape: (n_pairs, 1)
-            dof = max(self.co_array_num - self.dimension_number, 1)  # guard
-            self.sigma_tau[jj] = float(
-                np.sqrt((self.tau[:, jj, :].T @ residuals) / dof)[0]
-            )
+            # Calculate the sigma_tau value (Szuberla et al. 2006). #Unchanged from 2d 
+            residuals = self.tau[:, jj, :] - (self.xij @ z_final)
+            self.sigma_tau[jj] = np.sqrt(self.tau[:, jj, :].T@ residuals/ (self.co_array_num - self.dimension_number))[0]
 
-            # --- Uncertainty propagation in 3D ---
-            # Slowness covariance: Cov(z) ≈ sigma_tau^2 * (X^T X)^{-1}
-            try:
-                XtX_inv = np.linalg.inv(XtX)
-            except np.linalg.LinAlgError:
-                # Ill-conditioned geometry; fall back to pseudo-inverse
-                XtX_inv = np.linalg.pinv(XtX)
 
-            Cov_z = (self.sigma_tau[jj] ** 2) * XtX_inv  # shape: (3,3)
 
-            # Jacobians for azimuth (ψ), elevation (θ), and velocity (v = 1/||s||)
-            # ψ = atan2(sx, sy)
-            denom_az = sx * sx + sy * sy
-            if denom_az == 0:
-                var_az = np.inf
-            else:
-                J_az = np.array([sy / denom_az, -sx / denom_az, 0.0])  # dψ/d[sx,sy,sz]
-                var_az = J_az @ Cov_z @ J_az.T
-
-            # θ = atan2(sz, r_xy), r_xy = sqrt(sx^2 + sy^2)
-            if (r_xy == 0) and (sz == 0):
-                var_el = np.inf
-            else:
-                norm2 = s_norm * s_norm
-                # dθ/dsx = -sz*sx/(r_xy*||s||^2), dθ/dsy = -sz*sy/(r_xy*||s||^2), dθ/dsz = r_xy/||s||^2
-                if r_xy == 0:
-                    J_el = np.array(
-                        [0.0, 0.0, 1.0 / max(s_norm, 1e-12)]
-                    )  # limit as r_xy->0
-                else:
-                    J_el = np.array(
-                        [
-                            -sz * sx / (r_xy * norm2),
-                            -sz * sy / (r_xy * norm2),
-                            r_xy / norm2,
-                        ]
-                    )
-                var_el = J_el @ Cov_z @ J_el.T
-
-            # v = 1/||s|| -> dv/ds = -s / ||s||^3
-            J_v = -np.array([sx, sy, sz]) / (s_norm**3)
-            var_v = J_v @ Cov_z @ J_v.T
-
-            # Confidence intervals (two-sided) via sqrt(χ²_1df(p)) * std
-            # Convert az/el to degrees
-            std_az_deg = np.degrees(np.sqrt(var_az)) if np.isfinite(var_az) else np.nan
-            std_el_deg = np.degrees(np.sqrt(var_el)) if np.isfinite(var_el) else np.nan
-            std_v = float(np.sqrt(var_v)) if np.isfinite(var_v) else np.nan
-
-            self.conf_int_baz[jj] = ci_scale * std_az_deg
-            self.conf_int_elev[jj] = ci_scale * std_el_deg
-            self.conf_int_vel[jj] = ci_scale * std_v
 
 
 class LTSEstimator(LsBeam):

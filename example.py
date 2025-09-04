@@ -115,3 +115,5 @@ axs[2].plot(t, lts_baz - conf_int_baz, c="gray", linestyle=":")
 Note that our flipped element is dropped in both data
 windows that include the signal.
 """
+
+# %%

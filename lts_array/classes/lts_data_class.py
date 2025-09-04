@@ -18,7 +18,7 @@ class DataBin:
         self.alpha = alpha
 
     def build_data_arrays(
-        self, st, latlist, lonlist, elevlist, remove_elements=None, rij=None
+        self, st, latlist, lonlist, elevlist=None, remove_elements=None, rij=None
     ):
         """Collect basic data from stream file. Project lat/lon into r_ij coordinates.
 
@@ -48,15 +48,20 @@ class DataBin:
                 if rij is None:
                     latlist.remove(latlist[remove_elements[jj]])
                     lonlist.remove(lonlist[remove_elements[jj]])
-                    elevlist.remove(lonlist[remove_elements[jj]])
+                    if elevlist is not None:
+                        elevlist.remove(elevlist[remove_elements[jj]])
                 else:  # elevation or z not implemented in rij yet
-                    (
-                        _x,
-                        _y,
-                    ) = [list(_) for _ in rij]
-                    _x.remove(_x[remove_elements[jj]])
-                    _y.remove(_y[remove_elements[jj]])
-                    rij = np.array([_x, _y])
+                    if len(rij) == 2:
+                        _x, _y = [list(_) for _ in rij]
+                        _x.remove(_x[remove_elements[jj]])
+                        _y.remove(_y[remove_elements[jj]])
+                        rij = np.array([_x, _y])
+                    elif len(rij) == 3:
+                        _x, _y, _z = [list(_) for _ in rij]
+                        _x.remove(_x[remove_elements[jj]])
+                        _y.remove(_y[remove_elements[jj]])
+                        _z.remove(_z[remove_elements[jj]])
+                        rij = np.array([_x, _y, _z])
                 remove_elements -= 1
 
         # Save the station name
@@ -92,7 +97,7 @@ class DataBin:
         # Set the array coordinates
         if rij is None:
             self.rij = self.getrij(latlist, lonlist, elevlist)
-        else:
+        else:  # you must provide lat_list and lon_list even if providing 'rij'. not ideal?
             print("Ignoring `lat_list` and `lon_list` since `rij` array was provided!")
             self.rij = rij
         # Make sure the least squares problem is well-posed
@@ -101,6 +106,10 @@ class DataBin:
             raise RuntimeError(
                 "The array must have at least 3 elements for well-posed least squares estimation. Check rij array coordinates."
             )
+        if len(self.rij) == 2:
+            print("Using 2D array processing as only lat and lon were provided.")
+        elif len(self.rij) == 3:
+            print("Using 3d array processing as lat, lon, and elevation were provided.")
         # Is least trimmed squares or ordinary least squares going to be used?
         if self.alpha == 1.0:
             print(
@@ -108,7 +117,7 @@ class DataBin:
                 "least squares fit, NOT least trimmed squares.",
             )
 
-    def getrij(self, latlist, lonlist, elevlist):
+    def getrij(self, latlist, lonlist, elevlist=None):
         r"""Calculate element locations (r_ij) from latitude and longitude.
 
         Return the projected geographic positions
@@ -127,11 +136,7 @@ class DataBin:
         """
 
         # Check that the lat-lon arrays are the same size.
-        if (
-            (len(latlist) != self.nchans)
-            or (len(lonlist) != self.nchans)
-            or (len(elevlist) != self.nchans)
-        ):
+        if (len(latlist) != self.nchans) or (len(lonlist) != self.nchans):
             raise ValueError(
                 "Mismatch between the number of stream channels and the latitude or longitude list length."
             )  # noqa
@@ -139,7 +144,6 @@ class DataBin:
         # Pre-allocate "x" and "y" arrays.
         xnew = np.zeros((self.nchans,))
         ynew = np.zeros((self.nchans,))
-        znew = np.array(elevlist) / 1000  # divide by 1000 to convert to km
 
         for jj in range(1, self.nchans):
             # Obspy defaults to the WGS84 ellipsoid.
@@ -151,22 +155,35 @@ class DataBin:
             xnew[jj] = delta / 1000 * np.cos(az * np.pi / 180)
             ynew[jj] = delta / 1000 * np.sin(az * np.pi / 180)
 
-        # Remove the mean. also remove the mean from the z
+        # Remove the mean.
         xnew -= np.mean(xnew)
         ynew -= np.mean(ynew)
-        znew -= np.mean(znew)
 
-        rij = np.array([xnew.tolist(), ynew.tolist(), znew.tolist()])
-
-        return rij
+        if elevlist is None:
+            rij = np.array([xnew.tolist(), ynew.tolist()])
+            return rij
+        else:
+            if len(elevlist) != self.nchans:
+                raise ValueError(
+                    "Mismatch between the number of stream channels and the elevation list length."
+                )
+            znew = np.array(elevlist) / 1000  # convert from m to km
+            znew -= np.mean(znew)  # remove the mean from z
+            rij = np.array([xnew.tolist(), ynew.tolist(), znew.tolist()])
+            return rij
 
     def plot_array_coordinates(self):
         """Plot array element locations in Cartesian coordinates to the default device."""
         # Plot array coordinates
         fig = plt.figure(1)
         plt.clf()
-        plt.scatter(self.rij[0, :], self.rij[1, :], c=self.rij[2, :], cmap="viridis")
-        plt.colorbar(label="Relative elevation (km)")
+        if len(self.rij) == 2:
+            plt.scatter(self.rij[0, :], self.rij[1, :], c="k")
+        elif len(self.rij) == 3:
+            plt.scatter(
+                self.rij[0, :], self.rij[1, :], c=self.rij[2, :], cmap="viridis"
+            )
+            plt.colorbar(label="Relative elevation (km)")
         plt.axis("equal")
         plt.ylabel("km")
         plt.xlabel("km")
