@@ -1,6 +1,7 @@
 import numpy as np
 from scipy.linalg import lstsq
 from scipy.special import erfinv
+from scipy.stats import chi2 as scipy_chi2
 from numba import jit
 
 # Layout:
@@ -703,6 +704,56 @@ def rthEllipse(a, b, x0, y0):
 
     return eExtrm, eVec
 
+def estimate_conf_int_3d(s0, Sigma_s, chi2):
+    """
+    Estimate confidence intervals for back-azimuth, velocity, and elevation
+    from a 3D slowness covariance ellipsoid.
+
+    Args:
+        s0 (array): Slowness vector (3,)
+        Sigma_s (ndarray): 3x3 covariance matrix of slowness
+        chi2 (float): Chi-square threshold for confidence region
+
+    Returns:
+        baz_ci, vel_ci, elev_ci (floats): ± confidence intervals
+    """
+    # eigendecomp of covariance
+    w, V = np.linalg.eigh(Sigma_s)
+    axes = np.sqrt(chi2) * np.sqrt(w)  # semi-axes lengths
+
+    # sample ellipsoid surface in eigenframe
+    u = np.linspace(0, 2*np.pi, 121)
+    v = np.linspace(0, np.pi, 61)
+    U, Vv = np.meshgrid(u, v, indexing="xy")
+    Ex = axes[0] * np.cos(U) * np.sin(Vv)
+    Ey = axes[1] * np.sin(U) * np.sin(Vv)
+    Ez = axes[2] * np.cos(Vv)
+    E = np.stack([Ex, Ey, Ez], axis=-1)   # (..., 3)
+
+    # rotate to world frame and shift to center s0
+    Ew = E @ V.T + s0                     # (..., 3)
+
+    # velocity confidence interval
+    norms = np.linalg.norm(Ew, axis=-1).ravel()
+    v_bounds = 1.0 / np.array([norms.max(), norms.min()])
+    vel_ci = 0.5 * (v_bounds.max() - v_bounds.min())
+
+    # baz/elev from slowness
+    sx, sy, sz = Ew[...,0], Ew[...,1], Ew[...,2]
+    baz = (np.degrees(np.arctan2(sx, sy)) - 360) % 360
+    elev = np.degrees(np.arctan2(sz, np.hypot(sx, sy)))
+
+    # circular half-width for baz
+    s = np.sort((baz.ravel()+360)%360)
+    gaps = np.diff(np.r_[s, s[0]+360])
+    arc = 360 - gaps.max()
+    baz_ci = 0.5 * arc
+
+    # elevation is not circular
+    elev_ci = 0.5 * (elev.max() - elev.min())
+
+    return baz_ci, vel_ci, elev_ci
+
 
 def post_process(
     dimension_number,
@@ -851,6 +902,140 @@ def post_process(
 
     return lts_vel, lts_baz, element_weights, sigma_tau, conf_int_vel, conf_int_baz
 
+def post_process_3d(
+    dimension_number,
+    co_array_num,
+    alpha,
+    h,
+    nits,
+    tau,
+    xij,
+    coeffs,
+    lts_vel,
+    lts_baz,
+    lts_elev,
+    element_weights,
+    sigma_tau,
+    p,
+    conf_int_vel,
+    conf_int_baz,
+    conf_int_elev,
+):
+
+    # Initial fit - correction factor to make LTS approximately unbiased
+    raw_factor = raw_corfactor_lts(dimension_number, co_array_num, alpha)
+    # Initial fit - correction factor to make LTS approximately normally distributed # noqa
+    raw_factor *= raw_consfactor_lts(h, co_array_num)
+    # Final fit - correction factor to make LTS approximately unbiased
+    rew_factor1 = rew_corfactor_lts(dimension_number, co_array_num, alpha)
+    # Value of the normal inverse distribution function
+    # at 0.9875 (98.75%)
+    quantile = 2.2414027276049473
+    # Co-array
+    X_var = xij
+    # Chi^2; default is 90% confidence (p = 0.90)
+    # chi2 = -2 * np.log(1 - p)   # REMOVE, only valid in 2D
+    chi2 = scipy_chi2.ppf(p, df=dimension_number) #6.251388631170325
+
+    for jj in range(0, nits):
+
+        # Check for data spike:
+        if np.count_nonzero(tau[:, jj, :]) < (co_array_num - 2):
+            # We have a data spike, so do not process.
+            continue
+
+        # Now use original arrays
+        y_var = tau[:, jj, :]
+
+        residuals = y_var - (X_var @ coeffs[:, jj].reshape(dimension_number, 1))
+        sor = np.sort(residuals.flatten() ** 2)
+        s0 = np.sqrt(np.sum(sor[0:h]) / h) * raw_factor
+
+        if np.abs(s0) < 1e-7:
+            weights = np.abs(residuals) < 1e-7
+            z_final = coeffs[:, jj].reshape(dimension_number, 1)
+        else:
+            weights = np.abs(residuals / s0) <= quantile
+            weights = weights.flatten()
+            # Cast logical to int
+            weights_int = weights * 1
+
+            # Perform the weighted least squares fit with
+            # only data points with weight = 1
+            # to increase statistical efficiency.
+            q, r = np.linalg.qr(X_var[weights, :])
+            qt = q.conj().T @ y_var[weights]
+            z_final = np.linalg.lstsq(r, qt)[0]
+
+            # Find dropped data points
+            # Final residuals
+            residuals = y_var - (X_var @ z_final)
+            weights_num = np.sum(weights_int)
+            scale = np.sqrt(np.sum(residuals[weights] ** 2) / (weights_num - 1))
+            scale *= rew_factor1
+            if weights_num != co_array_num:
+                # Final fit - correction factor to make LTS approximately normally distributed # noqa
+                rew_factor2 = rew_consfactor_lts(
+                    weights, dimension_number, co_array_num
+                )  # noqa
+                scale *= rew_factor2
+            weights = np.abs(residuals / scale) <= 2.5
+            weights = weights.flatten()
+
+        #NOTE: in the LTS version z_final is not normalized... I think?
+        # Correct coefficients from standardization
+        #for ii in range(0, dimension_number):
+        #    z_final[ii] *= time_delay_mad[jj] / xij_mad[ii]
+
+        # Trace velocity & back-azimuth conversion
+        sx = z_final[0][0] # x-component of slowness vector       
+        sy = z_final[1][0] # y-component of slowness vector
+        sz = z_final[2][0] # z-component of slowness vector
+        
+        # Trace velocity = 1 / ||slowness||
+        lts_vel[jj] = 1 / np.linalg.norm(z_final, 2)
+        # Back-azimuth (horizontal angle, CW from North)
+        lts_baz[jj] = (np.arctan2(sx, sy) * 180 / np.pi - 360) % 360
+        # Elevation angle (up from horizontal plane)
+        horiz_norm = np.sqrt(sx**2 + sy**2)
+        lts_elev[jj] = np.arctan2(sz, horiz_norm) * 180 / np.pi
+        
+
+        # Use short-cut monte carlo uncertainty quantification
+
+
+        # Uncertainty Quantification - Szuberla & Olson, 2004
+        # Compute co-array eigendecomp. for uncertainty calcs.
+        c_eig_vals, c_eig_vecs = np.linalg.eigh(xij[weights, :].T @ xij[weights, :])
+        # In 3D, rotation matrix is given directly by eigenvectors
+        R = c_eig_vecs   # 3x3 rotation matrix, columns = principal axes
+
+        # Calculate the sigma_tau value (Szuberla et al. 2006).
+        residuals = tau[weights, jj, :] - (xij[weights, :] @ z_final)
+        m_w, _ = np.shape(xij[weights, :])
+        with np.errstate(invalid="raise"):
+            try:
+                sigma_tau[jj] = np.sqrt(
+                    tau[weights, jj, :].T @ residuals / (m_w - dimension_number)
+                )[0]
+            except FloatingPointError:
+                pass #move on to next time step, no error calculation possible
+
+        ###########
+        # Semi-axis lengths of ellipsoid
+        sigS = sigma_tau[jj] / np.sqrt(c_eig_vals)
+        # Build covariance of slowness (scaled eigenbasis)
+        Sigma_s = R @ np.diag(sigS**2) @ R.T
+        # Estimate confidence intervals
+        # min and max eVec and eExtrm
+        baz_ci, vel_ci, elev_ci = estimate_conf_int_3d(np.array([sx, sy, sz]), Sigma_s, chi2)
+
+        conf_int_baz[jj] = baz_ci
+        conf_int_vel[jj] = vel_ci
+        conf_int_elev[jj] = elev_ci
+
+    return lts_vel, lts_baz, lts_elev, element_weights, sigma_tau, conf_int_vel, conf_int_baz, conf_int_elev,
+
 
 def array_from_weights(weightarray, idx):
     """Return array element pairs from LTS weights.
@@ -896,7 +1081,7 @@ class LsBeam:
         # Time
         self.t = np.full(data.nits, np.nan)
         # Trace Velocity [m/s]
-        self.lts_vel = np.full(data.nits, np.nan)
+        self.lts_vel = np.full(data.nits, np.nan) #These are called lts_vel even when using OLSEstimator....
         # Back-azimuth [degrees]
         self.lts_baz = np.full(data.nits, np.nan)
         # Back-zenith [degrees] (0 is horizontal, 90 is straight up, can be negative as well)
@@ -1018,14 +1203,16 @@ class OLSEstimator(LsBeam):
         #Angle of the first principle component in xy plane, used for calculating rotation matrix
         #TODO - this needs to be expanded to 3d
         eig_vec_ang = np.arctan2(c_eig_vecs[1, 0], c_eig_vecs[0, 0])
-        #calculate rotation matrix TODO(3d)
         R = np.array(
             [[np.cos(eig_vec_ang), np.sin(eig_vec_ang)], #new x = (cos(theta), sin(theta))
             [-np.sin(eig_vec_ang), np.cos(eig_vec_ang)]]) #new y = (-sin(theta), cos(theta))
+        #R is exactly the same as c_eig_vecs ????? NOT ITS NOT --> [1,0], and [1,1] are negative
+        #print(f"Eigen vectors = \n{c_eig_vecs}")
+        #print(f"Rotation matrix = \n{R}")
         # Rotation matrix (2,2), multipied with 2d points rotates them by eig_vec_angle
         # Chi^2; default is 90% confidence (p = 0.90)
         # Special closed form for 2 degrees of freedom
-        chi2 = -2 * np.log(1 - self.p)
+        chi2 = -2 * np.log(1 - self.p) # 4.605170185988092
 
         # Loop through time
         for jj in range(data.nits):
@@ -1054,29 +1241,24 @@ class OLSEstimator(LsBeam):
             self.lts_baz[jj] = (np.arctan2(sx, sy) * 180 / np.pi - 360) % 360
 
             # Calculate the sigma_tau value (Szuberla et al. 2006).
+            #Sigma tau summarizes the error from a planar wave
             residuals = self.tau[:, jj, :] - (self.xij @ z_final)
             self.sigma_tau[jj] = np.sqrt(self.tau[:, jj, :].T@ residuals/ (self.co_array_num - self.dimension_number))[0]
 
             # Calculate uncertainties from Szuberla & Olson, 2004
             # Equation 16
-            sigS = self.sigma_tau[jj] / np.sqrt(c_eig_vals)
-            # Form uncertainty ellipse major/minor axes
+            sigS = self.sigma_tau[jj] / np.sqrt(c_eig_vals) #uncertainties in each eigenvector direction of the array
+            # Form uncertainty ellipse major/minor axes, in the eigenspace of the array
             a = np.sqrt(chi2) * sigS[0]
             b = np.sqrt(chi2) * sigS[1]
             # Rotate uncertainty ellipse to align major/minor axes
             # along coordinate system axes
             So = R @ [sx, sy]
-            #save these so we can plot #TODO: DELETE LATER
-            self.sx = sx
-            self.sy = sy
-            self.a = a
-            self.b = b
-            self.R = R
-            self.residuals = residuals
-
             # Find angle & slowness extrema
             try:
                 # rthEllipse routine can be unstable; catch instabilities
+                # eExtrm = min and max distance from the origin on the ci ellipse
+                # eVec = min and max angles of the ellipse
                 eExtrm, eVec = rthEllipse(a, b, So[0], So[1])
                 # Rotate eigenvectors back to original orientation
                 eVec = eVec @ R
@@ -1108,6 +1290,16 @@ class OLSEstimator(LsBeam):
         Args:
             data (DataBin): The DataBin object.
         """
+        if self.dimension_number==2:
+            raise RuntimeError(
+                    "Only 2 dimensions given. solve_3d() is not applicable use solve() instead."
+                )
+        # Pre-compute co-array eigendecomp. for uncertainty calcs. (same as in 2d)
+        c_eig_vals, c_eig_vecs = np.linalg.eigh(self.xij.T @ self.xij) 
+        # In 3D, rotation is given directly by eigenvectors
+        R = c_eig_vecs   # 3x3 rotation matrix, columns = principal axes
+        
+        chi2 = scipy_chi2.ppf(self.p, df=self.dimension_number) #6.251388631170325
 
         # Loop through time
         for jj in range(data.nits):
@@ -1144,11 +1336,26 @@ class OLSEstimator(LsBeam):
             horiz_norm = np.sqrt(sx**2 + sy**2)
             self.lts_elev[jj] = np.arctan2(sz, horiz_norm) * 180 / np.pi
 
-            # Calculate the sigma_tau value (Szuberla et al. 2006). #Unchanged from 2d 
+            # Calculate the sigma_tau value (Szuberla et al. 2006).
+            # st calculation is unchanged from 2d, but residuals will be different.
+            # 3d_sigma_tau should be universally lower than 2d_sigma_tau.. I think
             residuals = self.tau[:, jj, :] - (self.xij @ z_final)
             self.sigma_tau[jj] = np.sqrt(self.tau[:, jj, :].T@ residuals/ (self.co_array_num - self.dimension_number))[0]
 
+            # Semi-axis lengths of ellipsoid
+            sigS = self.sigma_tau[jj] / np.sqrt(c_eig_vals)
 
+            # Build covariance of slowness (scaled eigenbasis)
+            Sigma_s = R @ np.diag(sigS**2) @ R.T
+
+            # Estimate confidence intervals
+            # TODO - Fix confidence interval estimation. Right now the error ellipsoid is monte carlo sampled to estimate
+            # min and max eVec and eExtrm
+            baz_ci, vel_ci, elev_ci = estimate_conf_int_3d(np.array([sx, sy, sz]), Sigma_s, chi2)
+
+            self.conf_int_baz[jj] = baz_ci
+            self.conf_int_vel[jj] = vel_ci
+            self.conf_int_elev[jj] = elev_ci
 
 
 
@@ -1270,3 +1477,75 @@ class LTSEstimator(LsBeam):
                 self.stdict[tval] = stns
             if jj == (data.nits - 1) and data.alpha != 1.0:
                 self.stdict["size"] = data.nchans
+
+    def solve_3d(self, data):
+        """
+        3D attempt!
+        Apply the FAST_LTS algorithm to calculate a least trimmed squares solution for trace velocity, back-azimuth, MdCCM, and confidence intervals.
+
+        Args:
+            data (DataBin): The DataBin object.
+        """
+        # Determine the best slowness coefficients from FAST-LTS
+        self.slowness_coeffs = fast_LTS(
+            data.nits,
+            self.tau,
+            self.time_delay_mad,
+            self.xij_standardized,
+            self.xij_mad,
+            self.dimension_number,
+            self.candidate_size,
+            self.n_samples,
+            self.co_array_num,
+            self.slowness_coeffs,
+            self.csteps,
+            self.h,
+            self.csteps2,
+            random_set,
+            check_array,
+        )  # noqa
+        # Use the best slowness coefficients to determine dropped stations
+        # Calculate uncertainties at 90% confidence
+        (
+            self.lts_vel,
+            self.lts_baz,
+            self.lts_elev,
+            self.element_weights,
+            self.sigma_tau,
+            self.conf_int_vel,
+            self.conf_int_baz,
+            self.conf_int_elev,
+        ) = post_process_3d(
+            self.dimension_number,
+            self.co_array_num,
+            data.alpha,
+            self.h,
+            data.nits,
+            self.tau,
+            self.xij,
+            self.slowness_coeffs,
+            self.lts_vel,
+            self.lts_baz,
+            self.lts_elev,
+            self.element_weights,
+            self.sigma_tau,
+            self.p,
+            self.conf_int_vel,
+            self.conf_int_baz,
+            self.conf_int_elev,
+        )  # noqa
+
+
+        # Find dropped stations from weights
+        # Map dropped data points back to elements.
+        for jj in range(0, data.nits):
+            stns = array_from_weights(self.element_weights[:, jj], self.idx_pair)
+            # Stash the number of elements for plotting.
+            if len(stns) > 0:
+                tval = str(self.t[jj])
+                self.stdict[tval] = stns
+            if jj == (data.nits - 1) and data.alpha != 1.0:
+                self.stdict["size"] = data.nchans
+
+
+

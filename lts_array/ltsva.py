@@ -62,8 +62,8 @@ def ltsva(
     if plot_array_coordinates:
         data.plot_array_coordinates()
 
-    # TODO make OLSE return azimuth and zenith source angles
-    # TODO make LTSE return azimuth and zenith source angles
+    # TODO make OLSE return azimuth and elevation source angles
+    # TODO make LTSE return azimuth and elevation source angles
     if data.alpha == 1.0:
         # Ordinary Least Squares
         ltsva = OLSEstimator(data)
