@@ -1034,7 +1034,7 @@ def post_process_3d(
         conf_int_vel[jj] = vel_ci
         conf_int_elev[jj] = elev_ci
 
-    return lts_vel, lts_baz, lts_elev, element_weights, sigma_tau, conf_int_vel, conf_int_baz, conf_int_elev,
+    return lts_vel, lts_baz, lts_elev, element_weights, sigma_tau, conf_int_vel, conf_int_baz, conf_int_elev,    
 
 
 def array_from_weights(weightarray, idx):
@@ -1106,6 +1106,9 @@ class LsBeam:
         self.stdict = {}
         # Confidence value for uncertainty calculation
         self.p = 0.90
+        # Pre-allocate max cross-corr values for all pairs and timesteps (median of this is mdccm)
+        self.cij_maxs = np.full((self.co_array_num, data.nits), np.nan)
+
         # Check co-array rank for least squares problem
         if np.linalg.matrix_rank(self.xij) < self.dimension_number:
             raise RuntimeError(
@@ -1113,7 +1116,7 @@ class LsBeam:
                 + str(self.dimension_number)
             )
 
-    def calculate_co_array(self, data):  # TODO UPDATE FOR 3d
+    def calculate_co_array(self, data):  # TODO UPDATE FOR 3d DONE
         """Calculate the co-array coordinates (x, y) for the array.
         data shapes:
             xij → (n_pairs, dim) # relative sensor locations for all pairs of stations (6c2=15), still in km
@@ -1142,7 +1145,7 @@ class LsBeam:
 
     def correlate(self, data):
         """Cross correlate the time series data."""
-        for jj in range(0, data.nits):
+        for jj in range(0, data.nits): #loop through time steps
             # Get time from middle of window, except for the end.
             t0_ind = data.intervals[jj]
             tf_ind = data.intervals[jj] + data.winlensamp
@@ -1154,8 +1157,9 @@ class LsBeam:
             # Numba doesn't accept mode='full' in np.correlate currently
             # Cross correlate the wave forms. Get the differential times.
             # Pre-allocate the cross-correlation matrix
+            # No reason I can think of why cij needs to be part of self.... ?
             self.cij = np.empty((data.winlensamp * 2 - 1, self.co_array_num))
-            for k in range(self.co_array_num):
+            for k in range(self.co_array_num): #loop through station pairs
                 # MATLAB's xcorr w/ 'coeff' normalization:
                 # unit auto-correlations.
                 self.cij[:, k] = np.correlate(
@@ -1172,14 +1176,16 @@ class LsBeam:
                         * data.data[t0_ind:tf_ind, self.idx_pair[k][1]]
                     )
                 )  # noqa
-            # Find the median of the cross-correlation maxima
-            self.mdccm[jj] = np.nanmedian(self.cij.max(axis=0))
-            # Form the time delay vector and save it
+
+            self.cij_maxs[:, jj] = self.cij.max(axis=0) #save cij_maxs for this time step
+            # Form the time delay vector and save it #This is not used in LTS (I think?)
             delay = np.argmax(self.cij, axis=0) + 1
             self.tau[:, jj] = (data.winlensamp - delay) / data.sampling_rate
             self.time_delay_mad[jj] = 1.4826 * np.median(np.abs(self.tau[:, jj]))
 
         self.tau = np.reshape(self.tau, (self.co_array_num, data.nits, 1))
+        #calculate mdccm, for LTS this is preliminary and will be adjusted later for dropped pairs. 
+        self.mdccm = np.nanmedian(self.cij_maxs, axis=0)
 
 
 class OLSEstimator(LsBeam):
@@ -1467,8 +1473,13 @@ class LTSEstimator(LsBeam):
             self.conf_int_vel,
             self.conf_int_baz,
         )  # noqa
+
+        #correct the mccm value according to the dropped station pairs
+        masked_cij = np.where(self.element_weights == 1, self.cij_maxs, np.nan)
+        self.mdccm = np.nanmedian(masked_cij, axis=0)
         # Find dropped stations from weights
         # Map dropped data points back to elements.
+
         for jj in range(0, data.nits):
             stns = array_from_weights(self.element_weights[:, jj], self.idx_pair)
             # Stash the number of elements for plotting.
@@ -1510,7 +1521,7 @@ class LTSEstimator(LsBeam):
             self.lts_vel,
             self.lts_baz,
             self.lts_elev,
-            self.element_weights,
+            self.element_weights, #ERROR HERE, element_weights seem to be incorrect
             self.sigma_tau,
             self.conf_int_vel,
             self.conf_int_baz,

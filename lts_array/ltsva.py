@@ -11,7 +11,7 @@ def ltsva(
     st,
     lat_list,
     lon_list,
-    elev_list, #TODO This needs to be made optional, not sure the best way to do this. I like the ordering here.
+    elev_list, #NOTE, elev_list is KINDA OPTIONAL. It must be provided, but can be None
     window_length,
     window_overlap,
     alpha=1.0,
@@ -25,7 +25,7 @@ def ltsva(
         st: Obspy stream object. Assumes response has been removed.
         lat_list (list): List of latitude values for each element in ``st``.
         lon_list (list): List of longitude values for each element in ``st``.
-        elev_list (list): List of elevation values for each element in ``st``, measured in meters.
+        elev_list (list): None OR List of elevation values for each element in ``st``, measured in meters.
         window_length (float): Window length in seconds.
         window_overlap (float): Window overlap in the range (0.0 - 1.0).
         alpha (float): Fraction of data for LTS subsetting [0.5 - 1.0].
@@ -33,37 +33,40 @@ def ltsva(
         plot_array_coordinates (bool): Plot array coordinates? Defaults to False.
         remove_elements (list): (Optional) Remove element number(s) from ``st``, ``lat_list``, and ``lon_list`` before processing. Here numbering refers to the Python index (e.g. [0] = remove 1st element in stream).
         rij (array or None): A NumPy array with the first row corresponding to cartesian
-            "X" - coordinates and the second row corresponding to cartesian "Y" -
-            coordinates, in units of km. If this is provided then ``lat_list`` and
-            ``lon_list`` are ignored.
+            "X" - coordinates, the second row corresponding to cartesian "Y" -
+            coordinates, and the third row corresponding to cartesian "Z" - coordinates, in units of km. 
+            If this is provided then ``lat_list``, ``lon_list``, and ``elev_list`` are ignored.
 
     Returns:
         (tuple):
             A tuple of array processing parameters:
-            ``lts_vel`` (array): An array of trace velocity estimates.
-            ``lts_baz`` (array): An array of back-azimuth estimates.
-            ``t`` (array): An array of times centered on the processing windows.
-            ``mdccm`` (array): An array of median cross-correlation maxima.
+            ``lts_vel`` (array): An array of trace velocity estimates, given in km/s.
+            ``lts_baz`` (array): An array of back-azimuth estimates, clockwise degrees from North.
+            ``lts_elev`` (array): An array of elevation estimates, degrees from horizontal.
+            ``t`` (array): An array of times centered on the processing windows, given as matplotlib dates (floats).
+            ``mdccm`` (array): An array of median cross-correlation maxima. NOTE - as of now OLS and LTS produce same MdCCM results. This seems like an error.
             ``stdict`` (dict): A dictionary of flagged element pairs.
             ``sigma_tau`` (array): An array of sigma_tau values.
-            ``conf_int_vel`` (array): An array of 95% confidence intervals for the trace velocity.
-            ``conf_int_baz`` (array): An array of 95% confidence intervals for the back-azimuth.
+            ``conf_int_vel`` (array): An array of 90% confidence intervals for the trace velocity.
+            ``conf_int_baz`` (array): An array of 90% confidence intervals for the back-azimuth.
 
     """
 
     # Build data object
     # TODO make DataBin accept elevation list and format it properly DONE
-    # TODO make DataBin accept elevations in rij NOT DONE
+    # TODO make DataBin accept elevations in rij DONE
     data = DataBin(window_length, window_overlap, alpha)
     data.build_data_arrays(st, lat_list, lon_list, elev_list, remove_elements, rij)
+
 
     # Plot array coordinates as a check
     # TODO plot array coordinates with elevation as color? DONE
     if plot_array_coordinates:
         data.plot_array_coordinates()
 
-    # TODO make OLSE return azimuth and elevation source angles
-    # TODO make LTSE return azimuth and elevation source angles
+    # TODO make OLSE return azimuth and elevation source angles DONE
+    # TODO make LTSE return azimuth and elevation source angles DONE
+    # TODO fix 3d confidence interval solutions. 
     if data.alpha == 1.0:
         # Ordinary Least Squares
         ltsva = OLSEstimator(data)
@@ -71,7 +74,7 @@ def ltsva(
         # Least Trimmed Squares
         ltsva = LTSEstimator(data)
     ltsva.correlate(data)  # Note, correlate results are consistent with/without elev_list, as it should be
-    if len(data.rij) == 2:  # 2d case
+    if ltsva.dimension_number==2: #2d case, equivalent to testing if len(data.rij)
         ltsva.solve(data)
         return (
             ltsva.lts_vel,
@@ -83,7 +86,7 @@ def ltsva(
             ltsva.conf_int_vel,
             ltsva.conf_int_baz,
         )  # Does not include elevation angle
-    elif len(data.rij) == 3:  # 3d case
+    elif ltsva.dimension_number==3:  # 3d case
         ltsva.solve_3d(data)
         return (
             ltsva.lts_vel,
@@ -93,7 +96,7 @@ def ltsva(
             ltsva.mdccm,
             ltsva.stdict,
             ltsva.sigma_tau,
-            #ltsva.conf_int_vel,
-            #ltsva.conf_int_baz,
-            #ltsva.conf_int_elev,
-        )  # Confidence intervals not updated yet
+            ltsva.conf_int_vel,
+            ltsva.conf_int_baz,
+            ltsva.conf_int_elev,
+        )
