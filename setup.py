@@ -10,8 +10,8 @@ else:
 
 setup(
    name='lts_array',
-   version='2.0',
-   description='Apply least trimmed squares to infrasound and seismic array processing.',
+   version='3.0',
+   description='Apply least trimmed squares to infrasound and seismic array processing. 3D version!',
    license='LICENSE.txt',
    author='Jordan W. Bishop',
    url="https://github.com/uafgeotools/lts_array",
