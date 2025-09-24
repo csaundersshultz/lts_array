@@ -116,4 +116,3 @@ Note that our flipped element is dropped in both data
 windows that include the signal.
 """
 
-# %%
