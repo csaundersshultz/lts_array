@@ -1004,35 +1004,37 @@ def post_process_3d(
         # Use short-cut monte carlo uncertainty quantification
 
 
-        # Uncertainty Quantification - Szuberla & Olson, 2004
-        # Compute co-array eigendecomp. for uncertainty calcs.
-        c_eig_vals, c_eig_vecs = np.linalg.eigh(xij[weights, :].T @ xij[weights, :])
-        # In 3D, rotation matrix is given directly by eigenvectors
-        R = c_eig_vecs   # 3x3 rotation matrix, columns = principal axes
+        include_certainties=False #Turn off uncertainty calculation for testing for now
+        if include_certainties:
+            # Uncertainty Quantification - Szuberla & Olson, 2004
+            # Compute co-array eigendecomp. for uncertainty calcs.
+            c_eig_vals, c_eig_vecs = np.linalg.eigh(xij[weights, :].T @ xij[weights, :])
+            # In 3D, rotation matrix is given directly by eigenvectors
+            R = c_eig_vecs   # 3x3 rotation matrix, columns = principal axes
 
-        # Calculate the sigma_tau value (Szuberla et al. 2006).
-        residuals = tau[weights, jj, :] - (xij[weights, :] @ z_final)
-        m_w, _ = np.shape(xij[weights, :])
-        with np.errstate(invalid="raise"):
-            try:
-                sigma_tau[jj] = np.sqrt(
-                    tau[weights, jj, :].T @ residuals / (m_w - dimension_number)
-                )[0]
-            except FloatingPointError:
-                pass #move on to next time step, no error calculation possible
+            # Calculate the sigma_tau value (Szuberla et al. 2006).
+            residuals = tau[weights, jj, :] - (xij[weights, :] @ z_final)
+            m_w, _ = np.shape(xij[weights, :])
+            with np.errstate(invalid="raise"):
+                try:
+                    sigma_tau[jj] = np.sqrt(
+                        tau[weights, jj, :].T @ residuals / (m_w - dimension_number)
+                    )[0]
+                except FloatingPointError:
+                    pass #move on to next time step, no error calculation possible
 
-        ###########
-        # Semi-axis lengths of ellipsoid
-        sigS = sigma_tau[jj] / np.sqrt(c_eig_vals)
-        # Build covariance of slowness (scaled eigenbasis)
-        Sigma_s = R @ np.diag(sigS**2) @ R.T
-        # Estimate confidence intervals
-        # min and max eVec and eExtrm
-        baz_ci, vel_ci, elev_ci = estimate_conf_int_3d(np.array([sx, sy, sz]), Sigma_s, chi2)
+            ###########
+            # Semi-axis lengths of ellipsoid
+            sigS = sigma_tau[jj] / np.sqrt(c_eig_vals)
+            # Build covariance of slowness (scaled eigenbasis)
+            Sigma_s = R @ np.diag(sigS**2) @ R.T
+            # Estimate confidence intervals
+            # min and max eVec and eExtrm
+            baz_ci, vel_ci, elev_ci = estimate_conf_int_3d(np.array([sx, sy, sz]), Sigma_s, chi2)
 
-        conf_int_baz[jj] = baz_ci
-        conf_int_vel[jj] = vel_ci
-        conf_int_elev[jj] = elev_ci
+            conf_int_baz[jj] = baz_ci
+            conf_int_vel[jj] = vel_ci
+            conf_int_elev[jj] = elev_ci
 
     return lts_vel, lts_baz, lts_elev, element_weights, sigma_tau, conf_int_vel, conf_int_baz, conf_int_elev,    
 
